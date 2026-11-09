@@ -28,6 +28,19 @@ CATEGORY_KEYS = ("amenity", "shop", "office", "craft", "healthcare", "tourism", 
 TAG_RE = re.compile(r"^[a-z0-9_:]+(=[^\"\\]+)?$", re.I)
 
 
+def api_error(service: str, resp: httpx.Response) -> str:
+    """Short, actionable message instead of a raw HTML error page."""
+    body = " ".join(re.sub(r"<[^>]+>", " ", resp.text).split())[:160]
+    msg = f"{service} HTTP {resp.status_code}: {body}"
+    if resp.status_code in (403, 406):
+        msg += (
+            f" — the {service} server refused this client. Check its usage policy, make sure `user_agent` "
+            "names your application with a contact URL/email, or point the URL in the `osm:` config at "
+            "another instance you are permitted to use (e.g. self-hosted)."
+        )
+    return msg
+
+
 def _first(value: str | None) -> str | None:
     """OSM allows several values separated by ';' — take the first."""
     if not value:
@@ -60,12 +73,15 @@ class OsmOverpassSource:
     async def geocode(self, location: str) -> dict[str, Any] | None:
         if self.state and (cached := self.state.get_geocode(location)):
             return cached
-        resp = await self.fetcher.api_request(
-            "GET",
-            self.cfg.nominatim_url,
-            params={"q": location, "format": "jsonv2", "limit": 1, "addressdetails": 1},
-            headers={"Accept-Language": "en"},
-        )
+        try:
+            resp = await self.fetcher.api_request(
+                "GET",
+                self.cfg.nominatim_url,
+                params={"q": location, "format": "jsonv2", "limit": 1, "addressdetails": 1},
+                headers={"Accept-Language": "en"},
+            )
+        except httpx.HTTPStatusError as e:
+            raise SourceError(api_error("Nominatim", e.response)) from e
         results = resp.json()
         if not results:
             return None
@@ -130,7 +146,7 @@ class OsmOverpassSource:
                 "POST", self.cfg.overpass_url, data={"data": ql}, timeout=self.cfg.timeout_s + 15
             )
         except httpx.HTTPStatusError as e:
-            raise SourceError(f"Overpass error {e.response.status_code}: {e.response.text[:200]}") from e
+            raise SourceError(api_error("Overpass", e.response)) from e
         data = resp.json()
         if remark := data.get("remark"):
             log.warning("overpass remark (results may be partial)", extra={"remark": remark})

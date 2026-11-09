@@ -8,7 +8,7 @@ from leadgen.normalize import (
     registered_domain,
     split_location,
 )
-from leadgen.validate.email import email_type, rank
+from leadgen.validate.email import email_type, is_low_value, rank
 
 
 class TestNormalize:
@@ -90,6 +90,11 @@ class TestEmailValidation:
         assert email_type("sales.uk@acme.com") == EmailType.ROLE
         assert email_type("j.smith@acme.com") == EmailType.PERSONAL
         assert email_type("j.smith@outlook.com") == EmailType.FREE_MAIL
+        # department / mailing-list addresses are shared mailboxes, not people
+        assert email_type("python-announce@python.org") == EmailType.ROLE
+        assert email_type("security@postgresql.org") == EmailType.ROLE
+        assert email_type("dev.patel@acme.com") == EmailType.PERSONAL
+        assert is_low_value("python-announce@python.org") and not is_low_value("info@acme.com")
 
     async def test_rank_prefers_site_personal_then_role_and_demotes_careers(self, validator):
         checks = await validator.check_many(

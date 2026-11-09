@@ -109,3 +109,22 @@ async def test_seed_files(tmp_path):
     assert len(cands) == 1 and cands[0].company_name == "Acme" and cands[0].website == "https://acme.com/"
     cands = await collect(SeedUrlSource(txt), SearchQuery(keyword="", location=""))
     assert [c.website for c in cands] == ["https://acme.com/", "https://smile.co.uk/about"]
+
+
+@respx.mock
+async def test_overpass_refusal_gives_short_actionable_error(crawl_cfg):
+    cfg = OsmConfig()
+    respx.get(cfg.nominatim_url).respond(
+        200, json=[{"osm_type": "node", "osm_id": 1, "lat": "1", "lon": "2"}]
+    )
+    route = respx.post(cfg.overpass_url).respond(
+        406, text="<html><head><title>406 Not Acceptable</title></head><body>nginx</body></html>"
+    )
+    async with PoliteFetcher(crawl_cfg, UA, "T") as f:
+        src = OsmOverpassSource(f, cfg, IndustryMap.load())
+        with pytest.raises(SourceError) as exc:
+            await collect(src, SearchQuery(keyword="dentist", location="Somewhere"))
+    msg = str(exc.value)
+    assert msg.startswith("Overpass HTTP 406: 406 Not Acceptable nginx") and "<" not in msg
+    assert "user_agent" in msg
+    assert route.calls.last.request.headers["accept"] == "application/json"

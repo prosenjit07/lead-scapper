@@ -339,7 +339,7 @@ class Pipeline:
             if lead.website:
                 site = await self.crawler.crawl(lead.website)
                 stats.crawled += 1
-                if lead.domain:
+                if lead.domain and not self.dry_run:  # a dry run must not change what later runs skip
                     self.state.mark_crawled(lead.domain, "ok" if site.ok else "failed")
                 if site.ok:
                     self._apply_site(lead, site)

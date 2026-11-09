@@ -43,10 +43,17 @@ ROLE_LOCAL_PARTS = {
     "privacy", "legal", "dpo", "gdpr", "compliance", "events", "kontakt", "office1", "welcome", "ask",
     "care", "practice", "surgery", "school", "admissions", "headteacher", "principal", "secretary",
 }  # fmt: skip
+# Departments, mailing lists and system mailboxes: shared (not a person) and poor cold-outreach targets.
 LOW_VALUE_ROLES = {
     "careers", "jobs", "hr", "recruitment", "recruiting", "privacy", "legal", "dpo", "gdpr", "compliance",
     "webmaster", "billing", "invoices", "accounts", "press", "media", "feedback", "support", "help",
+    "security", "abuse", "conduct", "announce", "announcements", "list", "lists", "news", "newsletter",
+    "users", "devel", "request", "owner", "bounces", "notifications", "alerts", "sponsors",
+    "sponsorship", "donate", "donations", "membership", "members", "volunteer", "volunteers", "board",
+    "community", "editor", "editors", "web", "website", "it", "tech", "technical", "ops", "infra",
+    "sysadmin", "noc", "unsubscribe", "subscribe", "returns", "complaints",
 }  # fmt: skip
+ROLE_TOKENS = ROLE_LOCAL_PARTS | LOW_VALUE_ROLES
 FREE_MAIL_DOMAINS = {
     "gmail.com", "googlemail.com", "yahoo.com", "yahoo.co.uk", "yahoo.fr", "yahoo.de", "yahoo.co.in",
     "ymail.com", "rocketmail.com", "hotmail.com", "hotmail.co.uk", "hotmail.fr", "hotmail.de", "outlook.com",
@@ -95,16 +102,17 @@ def email_type(email: str) -> EmailType:
     local, _, domain = email.partition("@")
     if domain in FREE_MAIL_DOMAINS:
         return EmailType.FREE_MAIL
-    first = LOCAL_TOKEN_SPLIT.split(local, maxsplit=1)[0]
-    stripped = re.sub(r"\d+$", "", local)
-    if local in ROLE_LOCAL_PARTS or first in ROLE_LOCAL_PARTS or stripped in ROLE_LOCAL_PARTS:
+    # Any department/list token makes it shared: "sales.uk@", "python-announce@", "info2@".
+    tokens = {re.sub(r"\d+$", "", t) for t in LOCAL_TOKEN_SPLIT.split(local) if t}
+    if local in ROLE_TOKENS or tokens & ROLE_TOKENS:
         return EmailType.ROLE
     return EmailType.PERSONAL
 
 
 def is_low_value(email: str) -> bool:
     local = email.partition("@")[0]
-    return local in LOW_VALUE_ROLES or LOCAL_TOKEN_SPLIT.split(local, maxsplit=1)[0] in LOW_VALUE_ROLES
+    tokens = {re.sub(r"\d+$", "", t) for t in LOCAL_TOKEN_SPLIT.split(local) if t}
+    return local in LOW_VALUE_ROLES or bool(tokens & LOW_VALUE_ROLES)
 
 
 @dataclass

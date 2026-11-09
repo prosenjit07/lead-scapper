@@ -25,12 +25,18 @@ dist/
 .env
 .env.*
 !.env.example
+secrets/
+*service-account*.json
 
 # Local databases, exports & logs
 *.db
 *.sqlite
 *.sqlite3
 *.log
+*.log.[0-9]*
+data/
+logs/
+exports/
 
 # Operating system files
 .DS_Store

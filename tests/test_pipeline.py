@@ -183,6 +183,8 @@ async def test_role_only_policy(app_cfg, store, validator, sites):
 async def test_dry_run_writes_nothing(app_cfg, store, validator, sites):
     result = await run(app_cfg, store, validator, [acme(), phone_only()], dry_run=True)
     assert len(result.leads) == 2 and store.load_leads() == [] and store.list_runs() == []
+    # ...and a real run afterwards is not blocked by the dry run's crawl.
+    assert (await run(app_cfg, store, validator, [acme()])).stats.new == 1
 
 
 async def test_restricted_source_stores_only_website_facts(app_cfg, store, validator, sites):

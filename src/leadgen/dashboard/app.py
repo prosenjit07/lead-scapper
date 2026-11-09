@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 from datetime import UTC, datetime, timedelta
 
@@ -25,14 +26,16 @@ TABLE_COLUMNS = ["lead_id", "status", "company_name", "email", "email_status", "
                  "website", "city", "country", "industry", "source", "owner", "notes", "next_follow_up_at",
                  "created_at"]  # fmt: skip
 TOP_N = 12
+ROW_PX = 30  # vertical space per bar row
+AXIS_PX = 56  # x-axis labels + title below the bars
 
 st.set_page_config(page_title="Leads", page_icon="📇", layout="wide")
 
 
 def _args() -> argparse.Namespace:
-    p = argparse.ArgumentParser()
-    p.add_argument("--config", default="config/config.yaml")
-    p.add_argument("--store", default=None)
+    p = argparse.ArgumentParser(allow_abbrev=False)
+    p.add_argument("--config", default=os.environ.get("LEADGEN_CONFIG", "config/config.yaml"))
+    p.add_argument("--store", default=os.environ.get("LEADGEN_STORE") or None)
     return p.parse_known_args(sys.argv[1:])[0]
 
 
@@ -62,17 +65,27 @@ def ranked_bars(counts: pd.DataFrame, label: str, order: list[str] | None = None
     sort = order if order else "-x"
     return (
         alt.Chart(counts)
-        .mark_bar(color=BAR_COLOR[theme_mode()], cornerRadiusEnd=4, size=14)
+        # Bar thickness comes from band padding (not a fixed px size) so bars can never overlap,
+        # whatever height the container gives the chart.
+        .mark_bar(color=BAR_COLOR[theme_mode()], cornerRadiusEnd=4)
         .encode(
             x=alt.X("leads:Q", title="Leads", axis=alt.Axis(tickMinStep=1, gridOpacity=0.35, domain=False)),
             y=alt.Y(
-                "label:N", sort=sort, title=None, axis=alt.Axis(labelLimit=240, ticks=False, domain=False)
+                "label:N",
+                sort=sort,
+                title=None,
+                scale=alt.Scale(paddingInner=0.4, paddingOuter=0.2),
+                axis=alt.Axis(labelLimit=240, ticks=False, domain=False, labelOverlap=False),
             ),
             tooltip=[alt.Tooltip("label:N", title=label), alt.Tooltip("leads:Q", title="Leads")],
         )
-        .properties(height=max(90, 26 * len(counts)))
+        .properties(height=ROW_PX * len(counts))
         .configure_view(stroke=None)
     )
+
+
+def chart_height(counts: pd.DataFrame) -> int:
+    return ROW_PX * len(counts) + AXIS_PX
 
 
 def top_counts(series: pd.Series, n: int = TOP_N) -> pd.DataFrame:
@@ -87,7 +100,7 @@ def chart_card(title: str, counts: pd.DataFrame, label: str, order: list[str] | 
     if counts.empty:
         st.caption("No data for the current filters.")
         return
-    st.altair_chart(ranked_bars(counts, label, order), width="stretch")
+    st.altair_chart(ranked_bars(counts, label, order), width="stretch", height=chart_height(counts))
     with st.expander("Table view"):
         st.dataframe(
             counts.rename(columns={"label": label, "leads": "Leads"}), hide_index=True, width="stretch"

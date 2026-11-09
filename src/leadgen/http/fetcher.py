@@ -117,6 +117,7 @@ class PoliteFetcher:
         because these are documented APIs governed by their own usage policies."""
         host = urlsplit(url).hostname or ""
         kwargs.setdefault("follow_redirects", True)
+        kwargs["headers"] = {"Accept": "application/json", **(kwargs.get("headers") or {})}
         async for attempt in self._retrying():
             with attempt:
                 async with self.limiter.slot(host), self._sem:
