@@ -1,0 +1,122 @@
+# Normalized industry taxonomy.
+#   keywords:     words in a search keyword or business category that map to this industry
+#   osm_tags:     OpenStreetMap tags queried via Overpass ("key=value", "key" for any value)
+#   places_types: Google Places (New) place types
+# Override or extend with `industries_file:` in config.yaml (same format; entries are merged by name).
+industries:
+  "Healthcare / Dental":
+    keywords: [dentist, dental, orthodontist, orthodontics]
+    osm_tags: ["amenity=dentist", "healthcare=dentist"]
+    places_types: [dentist, dental_clinic]
+  "Healthcare / Medical Practice":
+    keywords: [doctor, clinic, gp, physician, medical practice, dermatologist]
+    osm_tags: ["amenity=doctors", "amenity=clinic", "healthcare=doctor", "healthcare=clinic"]
+    places_types: [doctor, medical_lab, hospital]
+  "Healthcare / Physiotherapy":
+    keywords: [physiotherapist, physiotherapy, physical therapy, chiropractor, osteopath]
+    osm_tags: ["healthcare=physiotherapist", "healthcare=alternative"]
+    places_types: [physiotherapist, chiropractor]
+  "Healthcare / Pharmacy":
+    keywords: [pharmacy, chemist, drugstore]
+    osm_tags: ["amenity=pharmacy", "healthcare=pharmacy"]
+    places_types: [pharmacy, drugstore]
+  "Veterinary":
+    keywords: [vet, veterinary, veterinarian, animal hospital]
+    osm_tags: ["amenity=veterinary"]
+    places_types: [veterinary_care]
+  "Legal Services":
+    keywords: [lawyer, attorney, solicitor, law firm, legal, notary, barrister]
+    osm_tags: ["office=lawyer", "office=notary"]
+    places_types: [lawyer]
+  "Accounting & Tax":
+    keywords: [accountant, accounting, bookkeeping, bookkeeper, tax advisor, cpa, auditor]
+    osm_tags: ["office=accountant", "office=tax_advisor"]
+    places_types: [accounting]
+  "Financial Services":
+    keywords: [financial advisor, financial planner, wealth management, mortgage broker, bank]
+    osm_tags: ["office=financial", "office=financial_advisor", "amenity=bank"]
+    places_types: [bank, finance]
+  "Insurance":
+    keywords: [insurance, insurance agency, insurance broker]
+    osm_tags: ["office=insurance"]
+    places_types: [insurance_agency]
+  "Real Estate":
+    keywords: [real estate, estate agent, realtor, property management, letting agent]
+    osm_tags: ["office=estate_agent", "office=property_management"]
+    places_types: [real_estate_agency]
+  "Architecture & Engineering":
+    keywords: [architect, architecture, engineering firm, structural engineer, surveyor]
+    osm_tags: ["office=architect", "office=engineer", "office=surveyor"]
+    places_types: []
+  "IT & Software":
+    keywords: [software, it services, it company, web development, app development, saas, it support, managed services]
+    osm_tags: ["office=it", "office=telecommunication"]
+    places_types: [software_company]
+  "Marketing & Advertising":
+    keywords: [marketing agency, digital marketing, advertising, seo, web design, branding, pr agency]
+    osm_tags: ["office=advertising_agency", "office=marketing"]
+    places_types: [marketing_agency, advertising_agency]
+  "Consulting":
+    keywords: [consulting, consultant, consultancy, management consulting, business consultant]
+    osm_tags: ["office=consulting"]
+    places_types: [consultant]
+  "Recruitment & HR":
+    keywords: [recruitment, recruiter, staffing, employment agency, headhunter]
+    osm_tags: ["office=employment_agency"]
+    places_types: [employment_agency]
+  "Education / Schools":
+    keywords: [school, primary school, secondary school, high school, academy, international school]
+    osm_tags: ["amenity=school"]
+    places_types: [school, primary_school, secondary_school]
+  "Education / Higher Education":
+    keywords: [university, college]
+    osm_tags: ["amenity=university", "amenity=college"]
+    places_types: [university]
+  "Education / Early Years":
+    keywords: [kindergarten, nursery, preschool, daycare, childcare]
+    osm_tags: ["amenity=kindergarten", "amenity=childcare"]
+    places_types: [preschool, child_care_agency]
+  "Education / Training & Tutoring":
+    keywords: [tutoring, tutor, language school, training center, driving school, music school, coaching centre]
+    osm_tags: ["amenity=language_school", "amenity=driving_school", "amenity=music_school", "amenity=training", "office=educational_institution"]
+    places_types: [tutoring_service, language_school, driving_school]
+  "Restaurants & Food":
+    keywords: [restaurant, cafe, coffee shop, bakery, catering, bar, pub]
+    osm_tags: ["amenity=restaurant", "amenity=cafe", "amenity=bar", "amenity=pub", "shop=bakery", "craft=caterer"]
+    places_types: [restaurant, cafe, coffee_shop, bakery, bar, meal_takeaway, catering_service]
+  "Hospitality & Travel":
+    keywords: [hotel, guest house, bed and breakfast, hostel, travel agency, tour operator]
+    osm_tags: ["tourism=hotel", "tourism=guest_house", "tourism=hostel", "office=travel_agent", "shop=travel_agency"]
+    places_types: [hotel, lodging, travel_agency, bed_and_breakfast, hostel]
+  "Fitness & Wellness":
+    keywords: [gym, fitness, yoga, pilates, personal trainer, spa, massage]
+    osm_tags: ["leisure=fitness_centre", "shop=massage", "leisure=sports_centre"]
+    places_types: [gym, fitness_center, yoga_studio, spa, massage]
+  "Beauty & Personal Care":
+    keywords: [hair salon, hairdresser, barber, beauty salon, nail salon, cosmetics]
+    osm_tags: ["shop=hairdresser", "shop=beauty", "shop=cosmetics"]
+    places_types: [hair_salon, beauty_salon, barber_shop, nail_salon, hair_care]
+  "Automotive":
+    keywords: [car repair, mechanic, garage, auto repair, car dealer, car wash, tyre]
+    osm_tags: ["shop=car_repair", "shop=car", "shop=tyres", "amenity=car_wash"]
+    places_types: [car_repair, car_dealer, car_wash]
+  "Construction & Trades":
+    keywords: [plumber, electrician, roofer, builder, contractor, construction, carpenter, painter, hvac]
+    osm_tags: ["craft=plumber", "craft=electrician", "craft=roofer", "craft=carpenter", "craft=painter", "craft=builder", "craft=hvac", "office=construction_company"]
+    places_types: [plumber, electrician, roofing_contractor, general_contractor, painter]
+  "Retail":
+    keywords: [shop, store, boutique, florist, clothing store, furniture store, hardware store, bookshop]
+    osm_tags: ["shop=florist", "shop=clothes", "shop=furniture", "shop=hardware", "shop=books", "shop=gift"]
+    places_types: [store, florist, clothing_store, furniture_store, hardware_store, book_store]
+  "Photography & Creative":
+    keywords: [photographer, photography, video production, design studio, printing]
+    osm_tags: ["craft=photographer", "shop=photo", "craft=printer", "shop=copyshop"]
+    places_types: [photographer]
+  "Coworking & Business Services":
+    keywords: [coworking, office space, business center, virtual office]
+    osm_tags: ["amenity=coworking_space", "office=coworking"]
+    places_types: [coworking_space]
+  "Nonprofit":
+    keywords: [charity, nonprofit, non-profit, ngo, foundation, association]
+    osm_tags: ["office=ngo", "office=association", "office=charity", "office=foundation"]
+    places_types: []

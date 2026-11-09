@@ -1,0 +1,62 @@
+# leadgen configuration. Secrets (API keys, sheet id) go in .env, not here.
+
+# Identify your crawler honestly: a name, version, and a page/email where site owners can reach you.
+# Sites can then allow/deny you specifically in robots.txt.
+user_agent: "AcmeLeadBot/1.0 (+https://example.com/bot; contact@example.com)"
+
+store: sheets            # sheets | sqlite  (sqlite = local file, no Google account needed)
+sqlite_path: data/leads.db
+state_path: data/state.db
+log_dir: logs
+log_level: INFO
+timezone: UTC            # used for schedules
+merge_duplicates: true   # fill BLANK fields of existing leads with newly found data (never status/notes/owner)
+# industries_file: config/industries.yaml   # optional: extend/override the built-in industry taxonomy
+
+crawl:
+  max_pages_per_site: 6      # homepage + contact/about/impressum/team pages
+  per_domain_delay_s: 2      # minimum gap between requests to one host (robots.txt crawl-delay wins if larger)
+  concurrency: 10            # sites crawled in parallel (always 1 request at a time per site)
+  timeout_s: 15
+  retries: 3
+  recrawl_after_days: 30     # don't re-crawl a domain within this window
+  render_js: false           # true needs: uv sync --extra browser && uv run playwright install chromium
+
+compliance:
+  personal_data: allow       # allow | role_only  (role_only keeps only info@/sales@-style addresses; no names)
+  retention_days: 365        # `leads purge` deletes un-engaged leads older than this
+  lawful_basis: legitimate_interest
+  require_email: false       # true = drop businesses where no email was found
+
+osm:
+  overpass_url: https://overpass-api.de/api/interpreter
+  nominatim_url: https://nominatim.openstreetmap.org/search
+
+google_places:
+  # Google's terms restrict storing Places content (place IDs are exempt). With false, Places only
+  # discovers businesses; stored details come from each business's own website. Review the
+  # Google Maps Platform terms before setting this to true.
+  store_place_details: false
+  language_code: en
+
+searches:
+  - name: dental-uk
+    keywords: ["dentist"]
+    locations: ["Bristol, UK", "Leeds, UK"]
+    sources: [osm, google_places]
+    industry: "Healthcare / Dental"     # optional: force the industry label
+    # osm_tags: ["amenity=dentist"]     # optional: otherwise derived from the industry taxonomy
+    max_results: 100                    # per keyword x location x source
+    tags: [q1-campaign]
+
+  - name: agencies-berlin
+    keywords: ["marketing agency", "web design"]
+    locations: ["Berlin, Germany"]
+    sources: [osm]
+    max_results: 50
+
+schedules:
+  - search: dental-uk
+    cron: "0 6 * * MON"      # every Monday 06:00 (timezone above)
+  - search: agencies-berlin
+    cron: "30 6 1 * *"       # 1st of every month 06:30

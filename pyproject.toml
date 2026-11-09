@@ -1,0 +1,59 @@
+[project]
+name = "leadgen"
+version = "0.1.0"
+description = "Compliant B2B lead discovery: OpenStreetMap + Google Places -> polite website crawl -> validated, de-duplicated leads in Google Sheets"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27",
+    "tenacity>=8.2",
+    "protego>=0.3",
+    "beautifulsoup4>=4.12",
+    "lxml>=5.0",
+    "tldextract>=5.1",
+    "phonenumbers>=8.13",
+    "pycountry>=23.12",
+    "email-validator>=2.1",
+    "dnspython>=2.6",
+    "gspread>=6.0",
+    "google-auth>=2.29",
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+    "pyyaml>=6.0",
+    "typer>=0.12",
+    "rich>=13.7",
+    "apscheduler>=3.10,<4",
+]
+
+[project.optional-dependencies]
+dashboard = ["streamlit>=1.35", "pandas>=2.2"]
+browser = ["playwright>=1.44"]
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "respx>=0.21", "ruff>=0.5"]
+
+[project.scripts]
+leads = "leadgen.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/leadgen"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "ASYNC"]
+ignore = ["E501", "B008"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["leadgen", "conftest"]
