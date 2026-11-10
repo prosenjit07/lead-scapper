@@ -2,7 +2,7 @@
 
 # Identify your crawler honestly: a name, version, and a page/email where site owners can reach you.
 # Sites can then allow/deny you specifically in robots.txt.
-user_agent: "AcmeLeadBot/1.0 (+https://example.com/bot; contact@example.com)"
+user_agent: "TechnodexLeadBot/1.0 (+https://technodex.vercel.app/; technodexsolutionsltd@gmail.com)"
 
 store: sqlite            # sheets | sqlite  (switch to sheets once .env has Google credentials)
 sqlite_path: data/leads.db
@@ -29,7 +29,9 @@ compliance:
   require_email: false       # true = drop businesses where no email was found
 
 osm:
-  overpass_url: https://overpass-api.de/api/interpreter
+  # overpass-api.de returns HTTP 406 for this machine; private.coffee is a public instance listed on
+  # https://wiki.openstreetmap.org/wiki/Overpass_API ("no rate limit"; notify them before large-scale use)
+  overpass_url: https://overpass.private.coffee/api/interpreter
   nominatim_url: https://nominatim.openstreetmap.org/search
 
 google_places:
