@@ -103,22 +103,25 @@ class PoliteFetcher:
             return min(exc.retry_after, 60.0)
         return min(self.cfg.backoff_base_s * (2 ** (retry_state.attempt_number - 1)), 30.0)
 
-    def _retrying(self) -> AsyncRetrying:
+    def _retrying(self, attempts: int | None = None) -> AsyncRetrying:
         return AsyncRetrying(
-            stop=stop_after_attempt(self.cfg.retries),
+            stop=stop_after_attempt(attempts or self.cfg.retries),
             wait=self._wait,
             retry=retry_if_exception(_is_retryable),
             reraise=True,
         )
 
     # ------------------------------------------------------------------ API calls
-    async def api_request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
+    async def api_request(
+        self, method: str, url: str, *, attempts: int | None = None, **kwargs: Any
+    ) -> httpx.Response:
         """Call a public API (Overpass, Nominatim, Places). Rate-limited + retried; robots.txt not applied
-        because these are documented APIs governed by their own usage policies."""
+        because these are documented APIs governed by their own usage policies. `attempts` overrides
+        crawl.retries, e.g. 1 when the caller has another server to fall back to."""
         host = urlsplit(url).hostname or ""
         kwargs.setdefault("follow_redirects", True)
         kwargs["headers"] = {"Accept": "application/json", **(kwargs.get("headers") or {})}
-        async for attempt in self._retrying():
+        async for attempt in self._retrying(attempts):
             with attempt:
                 async with self.limiter.slot(host), self._sem:
                     resp = await self.client.request(method, url, **kwargs)

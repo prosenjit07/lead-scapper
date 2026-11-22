@@ -267,8 +267,10 @@ def doctor(ctx: typer.Context) -> None:
         )
 
     headers = {"User-Agent": cfg.user_agent}
-    for name, url in (("overpass", cfg.osm.overpass_url.replace("/interpreter", "/status")),
-                      ("nominatim", cfg.osm.nominatim_url.replace("/search", "/status"))):  # fmt: skip
+    endpoints = [(f"overpass {httpx.URL(s.url).host}" + (" (europe)" if s.region == "europe" else ""),
+                  s.url.replace("/interpreter", "/status")) for s in cfg.osm.servers()]  # fmt: skip
+    endpoints.append(("nominatim", cfg.osm.nominatim_url.replace("/search", "/status")))
+    for name, url in endpoints:
         try:
             r = httpx.get(url, headers=headers, timeout=10)
             add(name, r.status_code < 400, f"HTTP {r.status_code}")

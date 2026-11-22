@@ -16,7 +16,7 @@ import httpx
 
 from leadgen.config import OsmConfig
 from leadgen.extract.industry import IndustryMap
-from leadgen.http.fetcher import PoliteFetcher
+from leadgen.http.fetcher import PoliteFetcher, RetryableStatusError
 from leadgen.logging_setup import get_logger
 from leadgen.models import Candidate, SearchQuery
 from leadgen.sources.base import SourceError
@@ -41,6 +41,23 @@ def api_error(service: str, resp: httpx.Response) -> str:
     return msg
 
 
+# Countries covered by Europe-only Overpass servers (Geofabrik's Europe extract). Russia and Turkey are
+# left out on purpose: they are not fully in that extract, so they go to a `world` server instead.
+EUROPE = frozenset(
+    ["AD", "AL", "AT", "BA", "BE", "BG", "BY", "CH", "CY", "CZ", "DE", "DK", "EE", "ES", "FI", "FO", "FR", "GB", "GG", "GI", "GR", "HR", "HU", "IE", "IM", "IS", "IT", "JE", "LI", "LT", "LU", "LV", "MC", "MD", "ME", "MK", "MT", "NL", "NO", "PL", "PT", "RO", "RS", "SE", "SI", "SK", "SM", "UA", "VA", "XK"]
+)
+
+
+def _describe_failure(exc: Exception) -> str:
+    if isinstance(exc, httpx.TimeoutException):
+        return "timed out (server busy)"
+    if isinstance(exc, httpx.ConnectError):
+        return "could not connect"
+    if isinstance(exc, RetryableStatusError):
+        return f"HTTP {exc.status} (busy)"
+    return type(exc).__name__
+
+
 def _first(value: str | None) -> str | None:
     """OSM allows several values separated by ';' — take the first."""
     if not value:
@@ -62,6 +79,7 @@ class OsmOverpassSource:
         self.cfg = cfg
         self.industries = industries
         self.state = state
+        self._unavailable: set[str] = set()  # Overpass servers that failed during this run
         nominatim_host = urlsplit(cfg.nominatim_url).hostname or ""
         self.fetcher.limiter.set_delay(
             nominatim_host, max(1.1, self.fetcher.limiter.delay_for(nominatim_host))
@@ -69,6 +87,46 @@ class OsmOverpassSource:
 
     def available(self) -> tuple[bool, str]:
         return True, ""
+
+    def servers_for(self, country_code: str) -> list[str]:
+        """Configured Overpass servers able to answer for this country, in configured order."""
+        cc = (country_code or "").upper()
+        return [s.url for s in self.cfg.servers() if s.region == "world" or cc in EUROPE]
+
+    async def _query_overpass(self, ql: str, geo: dict[str, Any], location: str) -> httpx.Response:
+        """Try each suitable server once (all retries if there is only one). A server that times out,
+        can't be reached or refuses us is skipped for the rest of this run, so one slow public server
+        doesn't cost minutes per location."""
+        servers = self.servers_for(geo.get("country_code", ""))
+        if not servers:
+            raise SourceError(
+                f"no Overpass server in osm.overpass_servers covers '{location}' "
+                f"(country {geo.get('country_code') or '?'}); add one with region: world"
+            )
+        attempts = 1 if len(servers) > 1 else None
+        problems: list[str] = []
+        for url in servers:
+            host = urlsplit(url).hostname or url
+            if url in self._unavailable:
+                problems.append(f"{host} skipped (failed earlier in this run)")
+                continue
+            try:
+                return await self.fetcher.api_request(
+                    "POST", url, data={"data": ql}, timeout=self.cfg.timeout_s + 15, attempts=attempts
+                )
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code in (403, 406):
+                    self._unavailable.add(url)
+                if len(servers) == 1:
+                    raise SourceError(api_error("Overpass", e.response)) from e
+                problems.append(f"{host}: HTTP {e.response.status_code}")
+            except (httpx.TransportError, RetryableStatusError) as e:
+                self._unavailable.add(url)
+                problems.append(f"{host}: {_describe_failure(e)}")
+        raise SourceError(
+            "no Overpass server answered (" + "; ".join(problems) + "). The public servers are busy: "
+            "retry later, or add another server under osm.overpass_servers in config.yaml"
+        )
 
     async def geocode(self, location: str) -> dict[str, Any] | None:
         if self.state and (cached := self.state.get_geocode(location)):
@@ -141,12 +199,7 @@ class OsmOverpassSource:
         tags = query.osm_tags or self.industries.osm_tags_for(query.keyword, query.industry)
         ql = self.build_query(geo, tags, query.keyword, query.max_results)
         log.debug("overpass query", extra={"query": ql})
-        try:
-            resp = await self.fetcher.api_request(
-                "POST", self.cfg.overpass_url, data={"data": ql}, timeout=self.cfg.timeout_s + 15
-            )
-        except httpx.HTTPStatusError as e:
-            raise SourceError(api_error("Overpass", e.response)) from e
+        resp = await self._query_overpass(ql, geo, query.location)
         data = resp.json()
         if remark := data.get("remark"):
             log.warning("overpass remark (results may be partial)", extra={"remark": remark})

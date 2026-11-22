@@ -31,9 +31,14 @@ compliance:
   require_email: false       # true = drop businesses where no email was found
 
 osm:
-  # overpass-api.de returns HTTP 406 for this machine; private.coffee is a public instance listed on
-  # https://wiki.openstreetmap.org/wiki/Overpass_API ("no rate limit"; notify them before large-scale use)
-  overpass_url: https://overpass.private.coffee/api/interpreter
+  # Public Overpass servers (listed on https://wiki.openstreetmap.org/wiki/Overpass_API), tried in
+  # order for each location. A server that times out is skipped for the rest of that run.
+  # Tested 2026-11-22: dresel.systems answered in ~2 s; private.coffee timed out (busy);
+  # overpass-api.de refuses this machine (HTTP 406); VK Maps could not be reached.
+  overpass_servers:
+    - url: https://ovp.dresel.systems/api/interpreter        # Europe only (UK, IE, EU …); free, no key;
+      region: europe                                        # max 4 parallel queries per IP
+    - url: https://overpass.private.coffee/api/interpreter  # worldwide (US, CA, AU, NZ, SG …); often slow
   nominatim_url: https://nominatim.openstreetmap.org/search
 
 google_places:

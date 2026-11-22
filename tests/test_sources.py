@@ -128,3 +128,83 @@ async def test_overpass_refusal_gives_short_actionable_error(crawl_cfg):
     assert msg.startswith("Overpass HTTP 406: 406 Not Acceptable nginx") and "<" not in msg
     assert "user_agent" in msg
     assert route.calls.last.request.headers["accept"] == "application/json"
+
+
+# ---------------------------------------------------------------------------- several Overpass servers
+EU_URL = "https://eu.overpass.test/api/interpreter"
+WORLD_URL = "https://world.overpass.test/api/interpreter"
+
+
+def _two_servers():
+    from leadgen.config import OverpassServer
+
+    return OsmConfig(
+        overpass_servers=[OverpassServer(url=EU_URL, region="europe"), OverpassServer(url=WORLD_URL)]
+    )
+
+
+def _geo(country: str, osm_id: int):
+    return [{"osm_type": "relation", "osm_id": osm_id, "lat": "0", "lon": "0", "display_name": "x",
+             "address": {"city": "X", "country_code": country}}]  # fmt: skip
+
+
+ONE_DENTIST = {"elements": [{"type": "node", "id": 1, "tags": {"name": "A Dental", "amenity": "dentist",
+                                                               "website": "a.example"}}]}  # fmt: skip
+
+
+@respx.mock
+async def test_overpass_server_chosen_by_region_with_fallback(crawl_cfg):
+    cfg = _two_servers()
+    respx.get(cfg.nominatim_url, params={"q": "Leeds, UK"}).respond(200, json=_geo("gb", 1))
+    respx.get(cfg.nominatim_url, params={"q": "Chicago, USA"}).respond(200, json=_geo("us", 2))
+    eu = respx.post(EU_URL).respond(200, json=ONE_DENTIST)
+    world = respx.post(WORLD_URL).respond(200, json=ONE_DENTIST)
+    async with PoliteFetcher(crawl_cfg, UA, "T") as f:
+        src = OsmOverpassSource(f, cfg, IndustryMap.load())
+        assert len(await collect(src, SearchQuery(keyword="dentist", location="Leeds, UK"))) == 1
+        assert (eu.call_count, world.call_count) == (1, 0)  # Europe → the Europe server first
+        assert len(await collect(src, SearchQuery(keyword="dentist", location="Chicago, USA"))) == 1
+        assert (eu.call_count, world.call_count) == (1, 1)  # outside Europe → never the Europe server
+
+
+@respx.mock
+async def test_slow_overpass_server_falls_back_then_is_skipped_for_the_run(crawl_cfg):
+    import httpx
+
+    cfg = _two_servers()
+    respx.get(cfg.nominatim_url, params={"q": "Dublin, Ireland"}).respond(200, json=_geo("ie", 3))
+    respx.get(cfg.nominatim_url, params={"q": "Paris, France"}).respond(200, json=_geo("fr", 4))
+    eu = respx.post(EU_URL).mock(side_effect=httpx.ReadTimeout("slow"))
+    world = respx.post(WORLD_URL).respond(200, json=ONE_DENTIST)
+    async with PoliteFetcher(crawl_cfg, UA, "T") as f:
+        src = OsmOverpassSource(f, cfg, IndustryMap.load())
+        assert len(await collect(src, SearchQuery(keyword="dentist", location="Dublin, Ireland"))) == 1
+        assert len(await collect(src, SearchQuery(keyword="dentist", location="Paris, France"))) == 1
+    assert eu.call_count == 1  # tried once (no retries, a fallback exists), then skipped for Paris
+    assert world.call_count == 2
+
+
+@respx.mock
+async def test_all_overpass_servers_failing_gives_one_short_error(crawl_cfg):
+    import httpx
+
+    cfg = _two_servers()
+    respx.get(cfg.nominatim_url).respond(200, json=_geo("de", 5))
+    respx.post(EU_URL).mock(side_effect=httpx.ConnectError("down"))
+    respx.post(WORLD_URL).respond(504)
+    async with PoliteFetcher(crawl_cfg, UA, "T") as f:
+        src = OsmOverpassSource(f, cfg, IndustryMap.load())
+        with pytest.raises(SourceError) as e:
+            await collect(src, SearchQuery(keyword="dentist", location="Berlin, Germany"))
+    msg = str(e.value)
+    assert "eu.overpass.test: could not connect" in msg and "world.overpass.test: HTTP 504 (busy)" in msg
+    assert "osm.overpass_servers" in msg and "\n" not in msg
+
+
+def test_only_europe_servers_configured_for_a_us_location(crawl_cfg):
+    from leadgen.config import OverpassServer
+
+    cfg = OsmConfig(overpass_servers=[OverpassServer(url=EU_URL, region="europe")])
+    src = OsmOverpassSource(PoliteFetcher(crawl_cfg, UA, "T"), cfg, IndustryMap.load())
+    assert src.servers_for("US") == [] and src.servers_for("gb") == [EU_URL]
+    assert OsmConfig().servers()[0].url == OsmConfig().overpass_url  # single overpass_url still works

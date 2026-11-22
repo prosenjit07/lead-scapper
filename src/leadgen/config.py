@@ -48,11 +48,24 @@ class ComplianceConfig(BaseModel):
     require_email: bool = False
 
 
+class OverpassServer(BaseModel):
+    url: str
+    # "europe": the server only holds European data (e.g. a Geofabrik Europe extract), so it is used for
+    # European locations only. "world": any location.
+    region: Literal["world", "europe"] = "world"
+
+
 class OsmConfig(BaseModel):
     overpass_url: str = "https://overpass-api.de/api/interpreter"
+    # Optional: several Overpass servers, tried in order for each location (the first one whose region
+    # covers it). A server that times out or refuses us is skipped for the rest of that run.
+    overpass_servers: list[OverpassServer] = Field(default_factory=list)
     nominatim_url: str = "https://nominatim.openstreetmap.org/search"
     timeout_s: int = 90
     point_radius_m: int = 10_000  # used when a location geocodes to a point instead of an area
+
+    def servers(self) -> list[OverpassServer]:
+        return list(self.overpass_servers) or [OverpassServer(url=self.overpass_url)]
 
 
 class GooglePlacesConfig(BaseModel):

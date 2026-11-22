@@ -223,6 +223,7 @@ schedules:
 
 - **Industry taxonomy**: `src/leadgen/data/industries.yaml` maps keywords, OSM tags, Google place types and schema.org types to about 30 normalized industries. Extend it with `industries_file:` (same format).
 - **Reuse a city list** across searches with a YAML anchor: name it once (`locations: &english_markets` followed by the list) and reuse it with `locations: *english_markets`. `config/config.yaml` does this for its industry searches. Restart the dashboard and API after editing the config, so they pick up the change.
+- **Overpass servers**: list several public servers under `osm.overpass_servers` (each with `region: europe` or `world`). For each location the app tries, in order, the servers whose region covers it. A server that times out or refuses the app is skipped for the rest of that run. A single `osm.overpass_url` still works.
 - **OSM tags**: if a keyword has no mapping, the OSM source falls back to a business-name search. Set `osm_tags` for precise results (see the [OSM Map Features](https://wiki.openstreetmap.org/wiki/Map_features) wiki).
 - **Store**: `store: sheets | sqlite | postgres`. PostgreSQL is the choice for production and for several programs writing at once; SQLite for local use and tests; Sheets as a shared spreadsheet.
 - Secrets live only in `.env`: `GOOGLE_SERVICE_ACCOUNT_FILE`, `GOOGLE_SHEET_ID`, `GOOGLE_PLACES_API_KEY`, `LEADGEN_API_KEY`, `DATABASE_URL`.
@@ -356,7 +357,7 @@ Discovery uses official APIs and open data only. Each source yields `Candidate` 
    (nwr["office"="advertising_agency"](around:10000,55.6761,12.5683);nwr["office"="marketing"](around:10000,55.6761,12.5683););out tags 50;
    ```
 
-   `nwr` matches nodes, ways and relations. `out tags N` returns only tags (no geometry) for at most `max_results` elements. A keyword with no tag mapping falls back to a case-insensitive name regex: `nwr["name"~"keyword",i]`.
+   The query goes to the first configured server whose region covers the location's country (a `europe` server only for European countries). If there are several, each is tried once; a server that times out, can't be reached or refuses the app is skipped for the rest of the run, and if none answers the location fails with a one-line error. `nwr` matches nodes, ways and relations. `out tags N` returns only tags (no geometry) for at most `max_results` elements. A keyword with no tag mapping falls back to a case-insensitive name regex: `nwr["name"~"keyword",i]`.
 3. **Map elements to candidates.** The name comes from `name` or `brand`; the website from `website`, `contact:website` or `url`; the email from `email` or `contact:email`; the phone from `phone`, `contact:phone` or `contact:mobile`. For multi-value tags (`a;b`), the first value is used. Elements with no name, or with no website, email or phone, are dropped. So a query can return fewer than `N` usable candidates. `external_id` is `osm:<type>/<id>`, and `source_url` is the element's openstreetmap.org page (ODbL attribution).
 
 **Google Places API (New)** ([google_places.py](src/leadgen/sources/google_places.py)): `POST places:searchText` with `textQuery: "<keyword> in <location>"`. An `X-Goog-FieldMask` limits the response, and therefore the billing SKU, to the fields used. The source pages through results with `nextPageToken` (20 per page, 60 at most) and skips `CLOSED_PERMANENTLY` places. Requests to the API are at least 0.5 s apart. With `store_place_details: false`, candidates are marked *restricted*: only the place ID and Maps link are stored, and all other facts must come from the business's own website.
@@ -576,7 +577,7 @@ lead-scraper/
 
 | Symptom | Fix |
 |---|---|
-| `Overpass … ReadTimeout` / `The read operation timed out` | The public Overpass server is busy (it happens with big cities). Retry later, or set `osm.overpass_url` to another public instance listed on the [OSM wiki](https://wiki.openstreetmap.org/wiki/Overpass_API#Public_Overpass_API_instances). Other locations in the same run are unaffected. |
+| `no Overpass server answered (… timed out (server busy) …)` | The public Overpass servers are busy. Retry later, or add another public instance from the [OSM wiki](https://wiki.openstreetmap.org/wiki/Overpass_API#Public_Overpass_API_instances) under `osm.overpass_servers` (mark Europe-only servers `region: europe`). `leads doctor` checks each server. Other locations in the same run are unaffected. |
 | `Port 8501 (or 8000) is already in use` | A dashboard (or API) is already running: open its URL, stop it with Ctrl+C in its terminal, or start another with `--port 8502`. `lsof -i :8501` shows what holds the port. |
 | `PostgreSQL store needs: uv sync --extra postgres …` | An install removed the extra: run `uv sync --extra dashboard --extra api --extra postgres`. |
 | `Overpass HTTP 406/403 … refused this client` | The public Overpass server filters some clients. Read its [usage policy](https://dev.overpass-api.de/overpass-doc/en/preface/commons.html), make sure `user_agent` names your application with a real contact URL/email, or set `osm.overpass_url` to another instance you may use (e.g. self-hosted). |
