@@ -78,7 +78,7 @@ class ScheduleConfig(BaseModel):
 
 class AppConfig(BaseModel):
     user_agent: str
-    store: Literal["sheets", "sqlite"] = "sheets"
+    store: Literal["sheets", "sqlite", "postgres"] = "sheets"
     sqlite_path: Path = Path("data/leads.db")
     state_path: Path = Path("data/state.db")
     log_dir: Path = Path("logs")
@@ -136,6 +136,8 @@ class Secrets(BaseSettings):
     google_places_api_key: str | None = None
     # REST API (`leads api`): when set, every endpoint except /health requires the X-API-Key header.
     leadgen_api_key: str | None = None
+    # PostgreSQL store (`store: postgres`), e.g. postgresql://user:password@localhost:5432/leadgen
+    database_url: str | None = None
 
 
 def resolve_config_path(path: str | Path | None) -> Path:

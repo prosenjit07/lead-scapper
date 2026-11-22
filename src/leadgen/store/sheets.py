@@ -214,9 +214,17 @@ class SheetsStore:
     def load_leads(self) -> list[Lead]:
         return [Lead.from_row(r) for r in self._rows_as_dicts(LEADS) if r.get("lead_id")]
 
-    def add_leads(self, leads: list[Lead]) -> None:
+    def add_leads(self, leads: list[Lead]) -> int:
+        if not leads:
+            return 0
         self._header(LEADS)
-        self._append(LEADS, [lead.to_row() for lead in leads])
+        existing = set(self._row_numbers(LEADS, "lead_id"))  # one column read; same rule as the other stores
+        new: dict[str, Lead] = {}
+        for lead in leads:
+            if lead.lead_id not in existing:
+                new.setdefault(lead.lead_id, lead)
+        self._append(LEADS, [lead.to_row() for lead in new.values()])
+        return len(new)
 
     def _row_numbers(self, title: str, key_col: str) -> dict[str, list[int]]:
         header = self._header(title, refresh=True)
@@ -263,6 +271,10 @@ class SheetsStore:
     # ------------------------------------------------------------------ suppression / activity / runs
     def load_suppression(self) -> set[str]:
         return {r["hash"] for r in self._rows_as_dicts(SUPPRESSION) if r.get("hash")}
+
+    def list_suppression(self) -> list[SuppressionEntry]:
+        return [SuppressionEntry(r["hash"], r.get("kind", ""), r.get("reason", ""), r.get("added_at", ""))
+                for r in self._rows_as_dicts(SUPPRESSION) if r.get("hash")]  # fmt: skip
 
     def add_suppression(self, entries: list[SuppressionEntry]) -> None:
         existing = self.load_suppression()

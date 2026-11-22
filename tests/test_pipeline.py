@@ -68,8 +68,12 @@ def sites():
         yield mock
 
 
-@pytest.fixture
-def store(tmp_path):
+@pytest.fixture(params=["sqlite", "postgres"])
+def store(request, tmp_path):
+    """Every pipeline test runs on SQLite, and on PostgreSQL when TEST_DATABASE_URL is set."""
+    if request.param == "postgres":
+        yield request.getfixturevalue("pg_store")
+        return
     s = SQLiteStore(tmp_path / "leads.db")
     yield s
     s.close()

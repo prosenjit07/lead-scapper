@@ -1,6 +1,6 @@
 # leadgen: compliant B2B lead discovery to Google Sheets
 
-`leadgen` finds businesses that match your keywords and locations, then reads the **public contact pages on each business's own website**. It extracts the company name, email, contact person, phone, address, industry and social profiles, validates the emails, removes duplicates, and stores one row per company in **Google Sheets** (or a local SQLite file). The sheet is structured so a cold-email or CRM workflow can plug in later.
+`leadgen` finds businesses that match your keywords and locations, then reads the **public contact pages on each business's own website**. It extracts the company name, email, contact person, phone, address, industry and social profiles, validates the emails, removes duplicates, and stores one row per company in **Google Sheets**, **PostgreSQL** or a local SQLite file. The sheet is structured so a cold-email or CRM workflow can plug in later.
 
 ```
  searches (config.yaml)             discovery sources                   enrichment                     storage
@@ -53,7 +53,16 @@ uv run leads run dental-uk --dry-run --limit 10    # preview without saving
 uv run leads run dental-uk                          # for real
 ```
 
-No Google account yet? Add `--store sqlite` to any command (or set `store: sqlite`) to use a local database.
+No Google account yet? Add `--store sqlite` to any command (or set `store: sqlite`) to use a local database. For production, and before any email automation, use PostgreSQL (below).
+
+### PostgreSQL setup (recommended for production)
+
+1. Get a PostgreSQL 16+ database: a local install (e.g. Homebrew), `docker compose up -d` with the included [docker-compose.yml](docker-compose.yml), or a managed service.
+2. `uv sync --extra postgres`, and put the connection string in `.env` as `DATABASE_URL` (e.g. `postgresql://user:password@localhost:5432/leadgen`).
+3. `uv run leads db migrate` creates the tables (run it again after upgrading leadgen).
+4. Set `store: postgres` in `config/config.yaml`. Moving from SQLite or Sheets? `uv run leads db import --from sqlite` (or `--from sheets`, `--dry-run` first) copies leads, activities, opt-outs and run history, and is safe to re-run.
+
+Why, and what comes next: [docs/postgres-migration-plan.md](docs/postgres-migration-plan.md).
 
 ### Google Sheets setup (free)
 
@@ -174,7 +183,8 @@ schedules:
 
 - **Industry taxonomy**: `src/leadgen/data/industries.yaml` maps keywords, OSM tags, Google place types and schema.org types to about 30 normalized industries. Extend it with `industries_file:` (same format).
 - **OSM tags**: if a keyword has no mapping, the OSM source falls back to a business-name search. Set `osm_tags` for precise results (see the [OSM Map Features](https://wiki.openstreetmap.org/wiki/Map_features) wiki).
-- Secrets live only in `.env`: `GOOGLE_SERVICE_ACCOUNT_FILE`, `GOOGLE_SHEET_ID`, `GOOGLE_PLACES_API_KEY`, `LEADGEN_API_KEY`.
+- **Store**: `store: sheets | sqlite | postgres`. PostgreSQL is the choice for production and for several programs writing at once; SQLite for local use and tests; Sheets as a shared spreadsheet.
+- Secrets live only in `.env`: `GOOGLE_SERVICE_ACCOUNT_FILE`, `GOOGLE_SHEET_ID`, `GOOGLE_PLACES_API_KEY`, `LEADGEN_API_KEY`, `DATABASE_URL`.
 
 ## CLI
 
@@ -196,8 +206,11 @@ schedules:
 | `leads scheduler start` / `list` | Run schedules in the foreground / show the next run times |
 | `leads dashboard` | Streamlit UI at http://localhost:8501 |
 | `leads api [--host H --port P]` / `--openapi FILE` | REST API with Swagger UI at http://localhost:8000/docs / write the OpenAPI schema |
+| `leads db migrate [--sql]` | Create or upgrade the PostgreSQL schema (`--sql` prints it for review) |
+| `leads db status` | PostgreSQL server, schema version and row counts |
+| `leads db import --from sqlite\|sheets [--path FILE] [--dry-run]` | Copy everything into PostgreSQL; checks values first, safe to re-run |
 
-Global options: `--config PATH` (or `LEADGEN_CONFIG`), `--store sheets|sqlite`, `-v` for debug logging.
+Global options: `--config PATH` (or `LEADGEN_CONFIG`), `--store sheets|sqlite|postgres`, `-v` for debug logging.
 
 ## REST API (Swagger)
 
@@ -266,6 +279,8 @@ The scheduler re-reads the config before each job, never overlaps the same searc
 2. After sending, set `status=contacted`, `last_contacted_at`, `campaign` and `sequence_step`, and append an *Activities* row.
 3. On reply, bounce or unsubscribe, update `status` accordingly. Use `leads forget` for erasure requests.
 4. Call the REST API (`leads api`, above), or use the `LeadStore` protocol (`src/leadgen/store/base.py`) as the integration point. A HubSpot, Notion or Postgres adapter only needs to implement it.
+
+**PostgreSQL** (`store: postgres`) is the store for email automation: several programs can write at once (sender workers, provider webhooks), and the database enforces one lead per domain and per email, even across concurrent runs. Status of the migration and the email-automation groundwork: [docs/postgres-migration-plan.md](docs/postgres-migration-plan.md).
 
 Also mention in your first email where you got the address and how to opt out (GDPR Art. 14).
 
@@ -419,16 +434,18 @@ Each file, with one line on what it's for. Folders marked *(local)* are created 
 ```
 lead-scraper/
 ├── README.md                      # this guide
-├── pyproject.toml                 # dependencies, optional extras (dashboard, api, browser), `leads` command, pytest/ruff settings
+├── pyproject.toml                 # dependencies, optional extras (dashboard, api, postgres, browser), `leads` command, pytest/ruff settings
 ├── uv.lock                        # exact dependency versions, for reproducible installs
 ├── .gitignore                     # keeps secrets, databases, logs and exports out of git
-├── .env                           # (local) secrets: Google credentials, Places API key, LEADGEN_API_KEY
+├── .env                           # (local) secrets: Google credentials, Places API key, LEADGEN_API_KEY, DATABASE_URL
+├── docker-compose.yml             # local PostgreSQL for development and tests (`docker compose up -d`)
 ├── config/
 │   └── config.yaml                # your searches, schedules, crawl, OSM and compliance settings
 ├── docs/
 │   ├── swagger.yaml               # REST API spec (OpenAPI 3.1), readable; generated by `leads api --openapi`
-│   └── openapi.json               # the same spec as JSON, for Postman and client generators
-├── data/                          # (local) leads.db (SQLite leads), state.db (crawl history + geocode cache), unsaved_*.csv
+│   ├── openapi.json               # the same spec as JSON, for Postman and client generators
+│   └── postgres-migration-plan.md # phased plan to move storage to PostgreSQL before email automation
+├── data/                          # (local) leads.db (SQLite leads), state.db (crawl history + geocode cache), backup/, unsaved_*.csv
 ├── logs/                          # (local) leadgen.log: rotating JSON-lines log of every run
 ├── exports/                       # (local) CSV/JSON files written by `leads export`
 ├── secrets/                       # (local) service-account.json for Google Sheets
@@ -477,6 +494,10 @@ lead-scraper/
 │   │   ├── base.py                # LeadStore interface that every storage backend implements
 │   │   ├── sheets.py              # Google Sheets backend: tabs, headers, dropdowns, Summary formulas, safe RAW writes
 │   │   ├── sqlite_store.py        # SQLite backend: same interface, one local file
+│   │   ├── postgres_store.py      # PostgreSQL backend: connection pool, constraints, timestamp conversion
+│   │   ├── migrate.py             # runs the Alembic schema migrations for `leads db migrate`
+│   │   ├── migrations/            # Alembic environment + versions/0001_initial.py (the PostgreSQL schema)
+│   │   ├── transfer.py            # `leads db import`: checked, re-runnable copy from SQLite/Sheets into PostgreSQL
 │   │   └── state.py               # crawl state, not leads: when each domain was crawled, cached geocodes
 │   │
 │   ├── dashboard/
@@ -489,7 +510,7 @@ lead-scraper/
 │       └── disposable_domains.txt # throwaway-email domains, marked invalid during validation
 │
 └── tests/                         # pytest suite: no real network, DNS or Google calls
-    ├── conftest.py                # shared fixtures: test config, fake DNS lookups, HTML fixture loader
+    ├── conftest.py                # shared fixtures: test config, fake DNS, HTML loader, throwaway PostgreSQL schema
     ├── fixtures/acme_*.html       # sample business pages (home, contact) used by extraction and pipeline tests
     ├── test_extract.py            # email, JSON-LD, social-link and website parsing
     ├── test_fetcher.py            # robots.txt rules, crawl-delay, retries, redirects, size cap (mocked HTTP)
@@ -497,6 +518,8 @@ lead-scraper/
     ├── test_pipeline.py           # end-to-end runs into SQLite: dedupe, merges, dry run, opt-outs, error isolation
     ├── test_dedupe_validate.py    # duplicate keys, lead IDs, email validation, suppression hashes
     ├── test_sheets_store.py       # Google Sheets backend against a fake gspread
+    ├── test_store_contract.py     # identical behaviour from SQLite, Sheets and PostgreSQL backends
+    ├── test_postgres.py           # PostgreSQL constraints, schema checks, `leads db` commands, import, API
     ├── test_compliance_cli.py     # CLI commands, purge and forget
     ├── test_dashboard.py          # renders the dashboard headlessly
     └── test_api.py                # REST API endpoints, API key, background runs, Swagger file freshness
@@ -518,15 +541,19 @@ lead-scraper/
 | Store write failed mid-run | Nothing is lost: the batch is saved to `data/unsaved_<run_id>.csv` and noted in the Runs tab. |
 | Few emails found | Many small businesses only publish a contact form. Try more keywords or Places, or add an enricher. `require_email: true` drops email-less leads. |
 | Summary tab broken after reordering columns | Run `leads sheet init` again. |
+| `PostgreSQL schema is at …, latest is …` | Run `leads db migrate` (after installing or upgrading leadgen). |
+| `cannot connect to PostgreSQL` | Check `DATABASE_URL` in `.env`, that the server is running (`pg_isready`), and that the database exists (`createdb leadgen`). |
 
 Logs: the console, plus JSON lines in `logs/leadgen.log` (rotated).
 
 ## Development
 
 ```bash
-uv sync --extra dashboard --extra api   # the dashboard and API tests are skipped without these
-uv run pytest            # 77 tests: extractors, validation, robots/rate limits (mocked HTTP), sources,
-                         # end-to-end pipeline (SQLite), Sheets store (fake gspread), CLI, REST API, dashboard
+uv sync --extra dashboard --extra api --extra postgres   # tests for missing extras are skipped
+uv run pytest            # extractors, validation, robots/rate limits (mocked HTTP), sources, end-to-end pipeline,
+                         # store contract (SQLite, Sheets, PostgreSQL), CLI, REST API, dashboard
+TEST_DATABASE_URL=postgresql:///leadgen_test uv run pytest   # also run every PostgreSQL test (124 in total);
+                         # each test gets its own throwaway schema in that database
 uv run ruff check src tests && uv run ruff format src tests
 ```
 

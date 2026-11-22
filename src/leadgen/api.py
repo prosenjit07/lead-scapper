@@ -13,6 +13,7 @@ import secrets as pysecrets
 import threading
 import uuid
 from collections.abc import Iterator
+from contextlib import AbstractContextManager, nullcontext
 from datetime import datetime
 from enum import StrEnum
 from typing import Annotated, Any, Literal
@@ -249,16 +250,22 @@ class ApiState:
         self.secrets = secrets
         self.store_kind = store_kind or cfg.store
         self._store = store
-        # One request at a time touches the store: SQLite connections and the Sheets client are not
-        # safe for concurrent use. Background runs open their own store.
-        self.store_lock = threading.Lock()
+        # SQLite connections and the Sheets client are not safe for concurrent use, so requests take
+        # turns. PostgreSQL uses a connection pool, so requests run in parallel. Background runs open
+        # their own store either way.
+        self.store_lock: AbstractContextManager[Any] = (
+            nullcontext() if self.store_kind == "postgres" else threading.Lock()
+        )
+        self._open_lock = threading.Lock()
         self.jobs: dict[str, Job] = {}
         self.jobs_lock = threading.Lock()
 
     @property
     def store(self) -> LeadStore:
         if self._store is None:  # opened lazily so /health and /docs work without credentials
-            self._store = open_store(self.cfg, self.secrets, self.store_kind)
+            with self._open_lock:  # two concurrent first requests must not open two stores
+                if self._store is None:
+                    self._store = open_store(self.cfg, self.secrets, self.store_kind)
         return self._store
 
 

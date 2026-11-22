@@ -108,7 +108,12 @@ class BatchWriter:
             if self.dry_run:
                 return
             try:
-                await asyncio.to_thread(self.store.add_leads, batch)
+                inserted = await asyncio.to_thread(self.store.add_leads, batch)
+                if isinstance(inserted, int) and inserted < len(batch):
+                    # The store already had some of these (e.g. another run saved them first).
+                    rejected = len(batch) - inserted
+                    self.stats.new -= rejected
+                    self.stats.duplicates += rejected
             except Exception as e:
                 self.stats.errors += 1
                 path = self._save_fallback(batch)

@@ -43,8 +43,12 @@ app = typer.Typer(
 )
 sheet_app = typer.Typer(help="Google Sheet setup.", no_args_is_help=True)
 scheduler_app = typer.Typer(help="Scheduled runs.", no_args_is_help=True)
+db_app = typer.Typer(
+    help="PostgreSQL schema and data import (needs: uv sync --extra postgres).", no_args_is_help=True
+)
 app.add_typer(sheet_app, name="sheet")
 app.add_typer(scheduler_app, name="scheduler")
+app.add_typer(db_app, name="db")
 
 console = Console()
 err = Console(stderr=True)
@@ -100,11 +104,13 @@ def main(
     ctx: typer.Context,
     config: Annotated[Path | None, typer.Option("--config", "-c", envvar="LEADGEN_CONFIG",
                                                 help="Path to config.yaml [default: config/config.yaml]")] = None,
-    store: Annotated[str | None, typer.Option("--store", help="Override the configured store: sheets | sqlite")] = None,
+    store: Annotated[str | None, typer.Option("--store", help="Override the configured store: sheets | sqlite | postgres")] = None,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
 ) -> None:  # fmt: skip
-    if store and store not in ("sheets", "sqlite"):
-        raise typer.BadParameter("--store must be 'sheets' or 'sqlite'")
+    from leadgen.store import STORE_KINDS
+
+    if store and store not in STORE_KINDS:
+        raise typer.BadParameter(f"--store must be one of: {', '.join(STORE_KINDS)}")
     ctx.obj = Ctx(config_path=resolve_config_path(config), store_kind=store, verbose=verbose)
 
 
@@ -195,6 +201,16 @@ def doctor(ctx: typer.Context) -> None:
                 )  # type: ignore[attr-defined]
             except Exception as e:
                 add("google sheet", False, f"{type(e).__name__}: {e}")
+    elif store_kind == "postgres":
+        try:
+            store = c.store
+            add(
+                "postgres",
+                True,
+                f"PostgreSQL {store.server_version()}, schema {store.schema_revision()} (latest)",
+            )  # type: ignore[attr-defined]
+        except ConfigError as e:
+            add("postgres", False, str(e))
     else:
         add("sqlite store", True, str(cfg.sqlite_path))
 
@@ -277,7 +293,7 @@ def sheet_init(ctx: typer.Context) -> None:
 # ============================================================================ running
 def _print_run(result: RunResult, dry_run: bool, out: Path | None) -> None:
     s = result.stats
-    t = Table(title=f"{s.run_id}  ({s.search})" + ("  [dry-run]" if dry_run else ""))
+    t = Table(title=f"{s.run_id}  ({s.search})" + ("  — DRY RUN, nothing saved" if dry_run else ""))
     for col in ("discovered", "crawled", "new", "duplicates", "merged", "suppressed", "skipped", "errors"):
         t.add_column(col, justify="right")
     t.add_row(*(str(getattr(s, col)) for col in
@@ -592,6 +608,122 @@ def scheduler_list(ctx: typer.Context) -> None:
     for search, cron, nxt in upcoming(c.cfg):
         t.add_row(search, cron, f"{nxt:%Y-%m-%d %H:%M %Z}" if nxt else "-")
     console.print(t)
+
+
+# ============================================================================ PostgreSQL
+def _database_url(c: Ctx) -> str:
+    _ = c.cfg  # validate config + set up logging first
+    if not c.secrets.database_url:
+        raise ConfigError(
+            "DATABASE_URL is not set in .env, e.g. postgresql://user:password@localhost:5432/leadgen"
+        )
+    try:
+        import alembic  # noqa: F401
+        import psycopg  # noqa: F401
+    except ImportError as e:
+        raise ConfigError("PostgreSQL support needs the extra: uv sync --extra postgres") from e
+    return c.secrets.database_url
+
+
+@db_app.command("migrate")
+@handle_errors
+def db_migrate(
+    ctx: typer.Context,
+    sql: Annotated[
+        bool, typer.Option("--sql", help="Print the SQL instead of running it (for review)")
+    ] = False,
+) -> None:
+    """Create or upgrade the PostgreSQL schema to the latest version (safe to re-run)."""
+    from leadgen.store import migrate
+    from leadgen.store.postgres_store import PostgresStore
+
+    url = _database_url(ctx.obj)
+    if sql:
+        migrate.upgrade(url, sql=True)
+        return
+    store = PostgresStore.connect(url, check_schema=False)
+    try:
+        before = store.schema_revision()
+        migrate.upgrade(url)
+        after = store.schema_revision()
+    finally:
+        store.close()
+    if before == after:
+        console.print(f"[green]schema already up to date[/green] ({after})")
+    else:
+        console.print(f"[green]migrated[/green] {before or 'empty database'} → {after}")
+
+
+@db_app.command("status")
+@handle_errors
+def db_status(ctx: typer.Context) -> None:
+    """Show the PostgreSQL server, schema version and row counts."""
+    from leadgen.store import migrate
+    from leadgen.store.postgres_store import PostgresStore
+
+    store = PostgresStore.connect(_database_url(ctx.obj), check_schema=False)
+    try:
+        current, head = store.schema_revision(), migrate.head_revision()
+        console.print(f"PostgreSQL {store.server_version()} · schema {current or 'empty'} · latest {head}"
+                      + ("" if current == head else "  [yellow]→ run `leads db migrate`[/yellow]"))  # fmt: skip
+        if current == head:
+            t = Table(title="Rows")
+            t.add_column("table")
+            t.add_column("rows", justify="right")
+            t.add_row("leads", str(len(store.load_leads())))
+            t.add_row("activities", str(len(store.list_activities(None))))
+            t.add_row("suppression", str(len(store.load_suppression())))
+            t.add_row("runs", str(len(store.list_runs(10**9))))
+            console.print(t)
+    finally:
+        store.close()
+
+
+@db_app.command("import")
+@handle_errors
+def db_import(
+    ctx: typer.Context,
+    source: Annotated[str, typer.Option("--from", help="Where to copy from: sqlite | sheets")] = "sqlite",
+    path: Annotated[Path | None, typer.Option(help="SQLite file [default: sqlite_path from config]")] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Check and count only; write nothing")] = False,
+) -> None:
+    """Copy leads, activities, suppression list and run history into PostgreSQL (safe to re-run)."""
+    from leadgen.store.postgres_store import PostgresStore
+    from leadgen.store.transfer import copy_store
+
+    c: Ctx = ctx.obj
+    url = _database_url(c)
+    if source == "sqlite":
+        from leadgen.store.sqlite_store import SQLiteStore
+
+        sqlite_path = path or c.cfg.sqlite_path
+        if not Path(sqlite_path).exists():
+            raise ConfigError(f"SQLite file not found: {sqlite_path}")
+        src: LeadStore = SQLiteStore(sqlite_path)
+    elif source == "sheets":
+        src = open_store(c.cfg, c.secrets, "sheets")
+    else:
+        raise typer.BadParameter("--from must be sqlite or sheets")
+
+    dst = PostgresStore.connect(url)
+    try:
+        report = copy_store(src, dst, dry_run=dry_run)
+    finally:
+        dst.close()
+    if report.problems:
+        err.print(f"[red]Nothing was imported.[/red] {len(report.problems)} value(s) PostgreSQL would reject; "
+                  "fix them in the source first:")  # fmt: skip
+        for p in report.problems[:50]:
+            err.print(f"  • {p}")
+        raise typer.Exit(1)
+    t = Table(title=f"Import from {source}" + ("  — DRY RUN, nothing written" if dry_run else ""))
+    for col in ("table", "in source", "copied", "skipped"):
+        t.add_column(col, justify="left" if col == "table" else "right")
+    for name, n in report.tables.items():
+        t.add_row(name, str(n.source), "-" if dry_run else str(n.copied), str(n.skipped))
+    console.print(t)
+    for note in report.notes:
+        console.print(f"[yellow]note:[/yellow] {note}")
 
 
 @app.command()

@@ -21,6 +21,11 @@ class TestEmails:
         hrefs = ["mailto:Jane.Smith@acme.co.uk?subject=Hi", "mailto:a@acme.com,b@acme.com", "/contact"]
         assert emails_from_mailto(hrefs) == ["jane.smith@acme.co.uk", "a@acme.com", "b@acme.com"]
 
+    def test_malformed_mailto_double_slash(self):
+        # Seen in the wild (redlanddental.co.uk): href="mailto://info@…" used to give "//info@…" marked valid
+        assert emails_from_mailto(["mailto://info@redlanddental.co.uk"]) == ["info@redlanddental.co.uk"]
+        assert clean_email("//info@acme.com") == "info@acme.com"  # e.g. from schema.org "mailto://…"
+
     def test_text_extraction_skips_assets_and_obfuscation(self):
         text = "Contact info@acme.com or logo@2x.png; reception [at] acme [dot] com"
         assert emails_from_text(text) == ["info@acme.com"]

@@ -1,0 +1,20 @@
+# Local PostgreSQL for development and tests (not for production: the password is public).
+#   docker compose up -d
+#   .env:  DATABASE_URL=postgresql://leadgen:leadgen@localhost:5432/leadgen
+#   tests: TEST_DATABASE_URL=postgresql://leadgen:leadgen@localhost:5432/leadgen uv run pytest
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: leadgen
+      POSTGRES_PASSWORD: leadgen
+      POSTGRES_DB: leadgen
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U leadgen"]
+      interval: 5s
+      retries: 10
+
+volumes:
+  pgdata: {}

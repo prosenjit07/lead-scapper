@@ -57,16 +57,17 @@ class SQLiteStore:
         with closing(self._conn.execute("SELECT * FROM leads ORDER BY created_at")) as cur:
             return [Lead.from_row(dict(r)) for r in cur.fetchall()]
 
-    def add_leads(self, leads: list[Lead]) -> None:
+    def add_leads(self, leads: list[Lead]) -> int:
         if not leads:
-            return
+            return 0
         placeholders = ", ".join("?" for _ in LEAD_COLUMNS)
         names = ", ".join(f'"{c}"' for c in LEAD_COLUMNS)
         with self._conn:
-            self._conn.executemany(
+            cur = self._conn.executemany(
                 f"INSERT OR IGNORE INTO leads ({names}) VALUES ({placeholders})",
                 [[lead.to_row()[c] for c in LEAD_COLUMNS] for lead in leads],
             )
+            return max(cur.rowcount, 0)
 
     def update_leads(self, updates: dict[str, dict[str, str]]) -> int:
         count = 0
@@ -91,6 +92,10 @@ class SQLiteStore:
 
     def load_suppression(self) -> set[str]:
         return {r["hash"] for r in self._conn.execute("SELECT hash FROM suppression")}
+
+    def list_suppression(self) -> list[SuppressionEntry]:
+        cur = self._conn.execute("SELECT hash, kind, reason, added_at FROM suppression ORDER BY added_at")
+        return [SuppressionEntry(r["hash"], r["kind"], r["reason"] or "", r["added_at"] or "") for r in cur]
 
     def add_suppression(self, entries: list[SuppressionEntry]) -> None:
         with self._conn:

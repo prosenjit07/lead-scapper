@@ -41,7 +41,8 @@ HEX_RE = re.compile(r"^[0-9a-f]{16,}$")
 
 def clean_email(raw: str) -> str | None:
     """Normalize and filter an email candidate. Returns None for junk/placeholder/system addresses."""
-    email = raw.strip().strip(".,;:'\"()[]<>").lower()
+    # lstrip("/"): malformed links like `mailto://info@acme.com` must not yield "//info@acme.com"
+    email = raw.strip().strip(".,;:'\"()[]<>").lstrip("/").lower()
     if email.count("@") != 1:
         return None
     local, domain = email.split("@")
@@ -63,7 +64,7 @@ def emails_from_mailto(hrefs: Iterable[str]) -> list[str]:
     for href in hrefs:
         if not href.lower().startswith("mailto:"):
             continue
-        target = unquote(href[7:]).split("?", 1)[0]
+        target = unquote(href[7:]).split("?", 1)[0].lstrip("/")  # tolerate `mailto://…`
         for part in re.split(r"[,;\s]+", target):
             if (e := clean_email(part)) and e not in out:
                 out.append(e)

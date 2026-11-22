@@ -23,6 +23,7 @@ log = get_logger("scheduler")
 
 def run_scheduled(config_path: Path, search_name: str, store_kind: str | None = None) -> None:
     """One scheduled job. Config is re-read each time so edits apply without a restart."""
+    store = None
     try:
         cfg = load_config(config_path)
         secrets = load_secrets()
@@ -35,6 +36,9 @@ def run_scheduled(config_path: Path, search_name: str, store_kind: str | None = 
             )
     except Exception:
         log.exception(f"scheduled run '{search_name}' failed")  # keep the scheduler alive
+    finally:
+        if store is not None and hasattr(store, "close"):
+            store.close()  # a long-running scheduler must not leak a connection (pool) per job
 
 
 def upcoming(cfg: AppConfig) -> list[tuple[str, str, datetime | None]]:

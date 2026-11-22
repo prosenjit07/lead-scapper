@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import uuid
 from pathlib import Path
 
 import pytest
@@ -8,6 +10,40 @@ from leadgen.config import AppConfig, CrawlConfig
 from leadgen.validate.email import EmailValidator, MxResult
 
 FIXTURES = Path(__file__).parent / "fixtures"
+# PostgreSQL tests run only when this points at a database you can create schemas in, e.g.
+#   TEST_DATABASE_URL=postgresql:///leadgen_test uv run pytest
+TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "")
+
+
+@pytest.fixture
+def pg_dsn():
+    """A fresh, migrated schema per test (dropped afterwards); skipped without TEST_DATABASE_URL."""
+    if not TEST_DATABASE_URL:
+        pytest.skip("set TEST_DATABASE_URL to run the PostgreSQL tests")
+    psycopg = pytest.importorskip("psycopg")
+    from leadgen.store import migrate
+
+    schema = f"test_{uuid.uuid4().hex[:12]}"
+    with psycopg.connect(TEST_DATABASE_URL, autocommit=True) as conn:
+        conn.execute(f'CREATE SCHEMA "{schema}"')
+    sep = "&" if "?" in TEST_DATABASE_URL else "?"
+    dsn = f"{TEST_DATABASE_URL}{sep}options=-csearch_path%3D{schema}"
+    try:
+        migrate.upgrade(dsn)
+        yield dsn
+    finally:
+        with psycopg.connect(TEST_DATABASE_URL, autocommit=True) as conn:
+            conn.execute(f'DROP SCHEMA "{schema}" CASCADE')
+
+
+@pytest.fixture
+def pg_store(pg_dsn):
+    from leadgen.store.postgres_store import PostgresStore
+
+    store = PostgresStore.connect(pg_dsn, max_size=2)
+    yield store
+    store.close()
+
 
 NO_MAIL_DOMAINS = {"deadmail.com"}
 DNS_FAIL_DOMAINS = {"flaky-dns.com"}

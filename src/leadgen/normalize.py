@@ -26,6 +26,10 @@ NON_WEBSITE_LABELS = {
     "facebook", "instagram", "linkedin", "twitter", "tiktok", "youtube", "pinterest", "google",
     "tripadvisor", "yelp", "booking", "whatsapp", "telegram", "amazon", "ebay", "etsy",
 }  # fmt: skip
+# Directories that are themselves public suffixes, so registered_domain() can't catch them: OSM often
+# lists an NHS service page (www.nhs.uk/services/dentist/…) as a practice's website, which made every
+# such practice look like the same business ("www.nhs.uk"). Matched by host suffix.
+NON_WEBSITE_HOST_SUFFIXES = ("nhs.uk",)
 # Hosting platforms missing from the public suffix list where each subdomain is a different business.
 SUBDOMAIN_PLATFORMS = {
     "business.site", "godaddysites.com", "square.site", "webflow.io", "carrd.co", "jimdofree.com",
@@ -105,6 +109,8 @@ def is_non_website(url: str | None) -> bool:
     host = _host_of(url)
     if not host:
         return False
+    if any(host == s or host.endswith("." + s) for s in NON_WEBSITE_HOST_SUFFIXES):
+        return True
     ext = _TLD(host)
     rd = (getattr(ext, "top_domain_under_public_suffix", None) or ext.registered_domain or "").lower()
     return rd in NON_WEBSITE_DOMAINS or ext.domain.lower() in NON_WEBSITE_LABELS

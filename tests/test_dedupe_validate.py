@@ -25,6 +25,15 @@ class TestNormalize:
         assert registered_domain("https://smile.business.site") == "smile.business.site"
         assert registered_domain("http://192.168.1.1") is None
 
+    def test_directory_pages_are_not_business_websites(self):
+        from leadgen.normalize import is_non_website
+
+        # www.nhs.uk is its own "registered domain" (nhs.uk is a public suffix), so without this every
+        # practice linking its NHS page was deduplicated into one lead.
+        assert is_non_website("https://www.nhs.uk/services/dentist/victoria-square-dental/V012345")
+        assert is_non_website("https://nhs.uk/x")
+        assert not is_non_website("https://www.notnhs.uk/") and not is_non_website("https://acmedental.co.uk")
+
     def test_country_and_location(self):
         assert country_name("UK") == country_name("GB") == "United Kingdom"
         assert country_name("usa") == "United States"
