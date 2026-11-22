@@ -113,18 +113,32 @@ class PoliteFetcher:
 
     # ------------------------------------------------------------------ API calls
     async def api_request(
-        self, method: str, url: str, *, attempts: int | None = None, **kwargs: Any
+        self,
+        method: str,
+        url: str,
+        *,
+        attempts: int | None = None,
+        deadline_s: float | None = None,
+        **kwargs: Any,
     ) -> httpx.Response:
         """Call a public API (Overpass, Nominatim, Places). Rate-limited + retried; robots.txt not applied
         because these are documented APIs governed by their own usage policies. `attempts` overrides
-        crawl.retries, e.g. 1 when the caller has another server to fall back to."""
+        crawl.retries, e.g. 1 when the caller has another server to fall back to. `deadline_s` caps the
+        total time of one attempt (the per-read `timeout` alone doesn't)."""
         host = urlsplit(url).hostname or ""
         kwargs.setdefault("follow_redirects", True)
         kwargs["headers"] = {"Accept": "application/json", **(kwargs.get("headers") or {})}
         async for attempt in self._retrying(attempts):
             with attempt:
                 async with self.limiter.slot(host), self._sem:
-                    resp = await self.client.request(method, url, **kwargs)
+                    if deadline_s:
+                        try:  # httpx timeouts are per read: a server trickling bytes would never trip them
+                            async with asyncio.timeout(deadline_s):
+                                resp = await self.client.request(method, url, **kwargs)
+                        except TimeoutError as e:  # retried like any other timeout
+                            raise httpx.ReadTimeout(f"no complete response within {deadline_s:.0f}s") from e
+                    else:
+                        resp = await self.client.request(method, url, **kwargs)
                 if resp.status_code in RETRYABLE_STATUS:
                     raise RetryableStatusError(
                         resp.status_code, url, _parse_retry_after(resp.headers.get("retry-after"))

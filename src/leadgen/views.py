@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from collections.abc import Iterable
 from datetime import UTC, datetime
 
 from leadgen.models import OPT_OUT_STATUSES, Lead, LeadStatus, utcnow_iso
+from leadgen.normalize import ascii_fold
 
 OPT_OUT_VALUES = {s.value for s in OPT_OUT_STATUSES}
 
@@ -87,3 +89,18 @@ def status_change(lead: Lead, new_status: str, note: str | None = None) -> tuple
         fields["notes"] = append_note(lead.notes, note)
     details = f"{lead.status} -> {new_status}" + (f": {note}" if note else "")
     return fields, details
+
+
+def export_filename(filters: dict[str, object], fmt: str) -> str:
+    """e.g. leads_berlin_valid_2026-11-22.csv: the filters that were applied, then the date."""
+    parts = ["leads"]
+    for key in ("industry", "country", "city", "status", "email_status", "source"):
+        parts += [_slug(str(getattr(v, "value", v))) for v in filters.get(key) or []]  # type: ignore[union-attr]
+    if filters.get("text"):
+        parts.append(_slug(str(filters["text"])))
+    name = "_".join(p for p in parts if p)[:80].rstrip("_-")
+    return f"{name}_{datetime.now(UTC):%Y-%m-%d}.{fmt}"
+
+
+def _slug(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", ascii_fold(value).lower()).strip("-")

@@ -7,17 +7,25 @@ import asyncio
 import os
 import sys
 from datetime import UTC, datetime, timedelta
+from urllib.parse import urlencode
 
 import altair as alt
 import pandas as pd
 import streamlit as st
 
-from leadgen.config import AppConfig, ConfigError, SearchConfig, Secrets, load_config, load_secrets
-from leadgen.logging_setup import setup_logging
-from leadgen.models import LEAD_COLUMNS, LeadStatus
-from leadgen.store import open_store
-from leadgen.store.base import LeadStore
-from leadgen.views import OPT_OUT_VALUES
+from leadgen.dashboard.errors import render_error  # stdlib + streamlit only: always importable
+
+try:
+    from leadgen.config import AppConfig, SearchConfig, Secrets, load_config, load_secrets
+    from leadgen.logging_setup import setup_logging
+    from leadgen.models import LEAD_COLUMNS, LeadStatus
+    from leadgen.store import open_store
+    from leadgen.store.base import LeadStore
+    from leadgen.views import OPT_OUT_VALUES, export_filename
+except ImportError as e:  # e.g. the code was updated while this dashboard was running
+    st.set_page_config(page_title="Leads", page_icon="📇", layout="wide")
+    render_error(e)
+    st.stop()
 
 # One hue for single-series magnitude bars (validated reference palette; light/dark steps).
 BAR_COLOR = {"light": "#2a78d6", "dark": "#3987e5"}
@@ -48,7 +56,8 @@ def get_context(config_path: str, store_kind: str | None) -> tuple[AppConfig, Se
 
 
 @st.cache_data(ttl=120, show_spinner="Loading leads…")
-def load_df(_store: LeadStore, nonce: int) -> pd.DataFrame:
+def load_df(_store: LeadStore, source: str, nonce: int) -> pd.DataFrame:
+    """`source` (config path + store kind) is part of the cache key: `_store` itself is not hashed."""
     leads = _store.load_leads()
     return pd.DataFrame([lead.to_row() for lead in leads], columns=LEAD_COLUMNS)
 
@@ -150,7 +159,7 @@ def kpis(df: pd.DataFrame) -> None:
               help="Has a non-invalid email and is not unsubscribed / do-not-contact / bounced")  # fmt: skip
 
 
-def leads_table(df: pd.DataFrame, store: LeadStore) -> None:
+def leads_table(df: pd.DataFrame, store: LeadStore, filters: dict[str, object] | None = None) -> None:
     st.subheader("Leads")
     view = df[TABLE_COLUMNS].sort_values("created_at", ascending=False).reset_index(drop=True)
     edited = st.data_editor(
@@ -184,14 +193,24 @@ def leads_table(df: pd.DataFrame, store: LeadStore) -> None:
         for lead_id, _, new in status_changes:
             if new == LeadStatus.CONTACTED.value:
                 changed[lead_id]["last_contacted_at"] = datetime.now(UTC).replace(microsecond=0).isoformat()
-        store.update_leads(changed)
-        for lead_id, old, new in status_changes:
-            store.add_activity(lead_id, "status_change", f"{old} -> {new} (dashboard)")
-        st.session_state.nonce = st.session_state.get("nonce", 0) + 1
-        st.toast(f"Saved {len(changed)} lead(s)")
-        st.rerun()
+        try:
+            store.update_leads(changed)
+            for lead_id, old, new in status_changes:
+                store.add_activity(lead_id, "status_change", f"{old} -> {new} (dashboard)")
+        except Exception as e:
+            render_error(e, where="Saving your changes", key="retry_save")
+        else:
+            st.session_state.nonce = st.session_state.get("nonce", 0) + 1
+            st.toast(f"Saved {len(changed)} lead(s)")
+            st.rerun()
+    filters = filters or {}
     mid.download_button("Download CSV", df.to_csv(index=False).encode("utf-8"),
-                        file_name=f"leads_{datetime.now():%Y%m%d_%H%M}.csv", mime="text/csv")  # fmt: skip
+                        file_name=export_filename(filters, "csv"), mime="text/csv",
+                        help="The table as shown, opted-out leads included. For an email tool, use the API link below.")  # fmt: skip
+    with st.expander("Same filters as a REST API link (for scripts and email tools)"):
+        st.code(api_export_url(filters), language=None)
+        st.caption("Contactable leads only: opted-out and invalid emails are left out. Add `&format=json` for JSON. "
+                   "Start the API with `leads api` (Swagger docs at /docs).")  # fmt: skip
 
 
 def run_panel(cfg: AppConfig, secrets: Secrets, store: LeadStore) -> None:
@@ -244,9 +263,13 @@ def run_panel(cfg: AppConfig, secrets: Secrets, store: LeadStore) -> None:
             return
         search = cfg.get_search(chosen)
         source_override = sources or None
-    with st.spinner(f"Running '{search.name}' — polite crawling takes a while…"):
-        result = asyncio.run(run_search(cfg, secrets, store, search, sources=source_override,
-                                        limit=int(limit), dry_run=dry_run))  # fmt: skip
+    try:
+        with st.spinner(f"Running '{search.name}' — polite crawling takes a while…"):
+            result = asyncio.run(run_search(cfg, secrets, store, search, sources=source_override,
+                                            limit=int(limit), dry_run=dry_run))  # fmt: skip
+    except Exception as e:
+        render_error(e, where=f"Running '{search.name}'", key="retry_run")
+        return
     s = result.stats
     st.success(f"{s.run_id}: discovered {s.discovered}, crawled {s.crawled}, new {s.new}, "
                f"duplicates {s.duplicates}, errors {s.errors}" + (" (dry run, nothing saved)" if dry_run else ""))  # fmt: skip
@@ -272,8 +295,8 @@ def main() -> None:
     args = _args()
     try:
         cfg, secrets, store = get_context(args.config, args.store)
-    except ConfigError as e:
-        st.error(f"Configuration problem: {e}")
+    except Exception as e:  # config, credentials, database unreachable …
+        render_error(e, where="Starting the dashboard")
         st.stop()
 
     st.title("Leads")
@@ -281,7 +304,7 @@ def main() -> None:
     top = st.columns([6, 1])
     if top[1].button("Refresh"):
         st.session_state.nonce = st.session_state.get("nonce", 0) + 1
-    df = load_df(store, st.session_state.get("nonce", 0))
+    df = load_df(store, f"{args.config}|{store.name}", st.session_state.get("nonce", 0))
 
     tab_overview, tab_leads, tab_run, tab_runs = st.tabs(["Overview", "Leads", "Run search", "Runs"])
     with tab_overview:
@@ -304,30 +327,55 @@ def main() -> None:
         with c4:
             chart_card("Lead source", top_counts(filtered["source"]), "Source")
     with tab_leads:
-        filtered_leads = apply_filters_compact(df)
-        leads_table(filtered_leads, store)
+        filtered_leads, lead_filters = apply_filters_compact(df)
+        leads_table(filtered_leads, store, lead_filters)
     with tab_run:
         run_panel(cfg, secrets, store)
     with tab_runs:
         runs_panel(store)
 
 
-def apply_filters_compact(df: pd.DataFrame) -> pd.DataFrame:
-    c1, c2, c3 = st.columns(3)
+def apply_filters_compact(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, object]]:
+    """Leads-tab filters. Returns the filtered table and the filters (for the file name and API link)."""
+    c1, c2, c3, c4, c5 = st.columns([1, 1.2, 1, 1, 1.4])
     status = c1.multiselect("Status ", [s.value for s in LeadStatus], key="t_status")
     industry = c2.multiselect("Industry ", sorted(v for v in df["industry"].unique() if v), key="t_industry")
-    text = c3.text_input("Search ", key="t_text", placeholder="name, email, domain, notes")
+    city = c3.multiselect("City ", sorted(v for v in df["city"].unique() if v), key="t_city")
+    email_status = c4.multiselect("Email ", ["valid", "risky", "invalid", "missing"], key="t_email")
+    text = c5.text_input("Search ", key="t_text", placeholder="name, email, domain, notes")
     out = df
-    if status:
-        out = out[out["status"].isin(status)]
-    if industry:
-        out = out[out["industry"].isin(industry)]
+    for col, chosen in (
+        ("status", status),
+        ("industry", industry),
+        ("city", city),
+        ("email_status", email_status),
+    ):
+        if chosen:
+            out = out[out[col].isin(chosen)]
     if text:
         hay = (
             out["company_name"] + " " + out["email"] + " " + out["domain"] + " " + out["notes"]
         ).str.lower()
         out = out[hay.str.contains(text.lower(), regex=False)]
-    return out
+    return out, {
+        "status": status,
+        "industry": industry,
+        "city": city,
+        "email_status": email_status,
+        "text": text,
+    }
 
 
-main()
+def api_export_url(filters: dict[str, object]) -> str:
+    """The REST API URL that exports these leads (`leads api`); base URL from LEADGEN_API_URL."""
+    base = os.environ.get("LEADGEN_API_URL", "http://localhost:8000").rstrip("/")
+    params = [(k, v) for k in ("status", "industry", "city", "email_status") for v in filters.get(k) or []]  # type: ignore[union-attr]
+    if filters.get("text"):
+        params.append(("q", str(filters["text"])))
+    return f"{base}/api/v1/leads/export" + (f"?{urlencode(params)}" if params else "")
+
+
+try:
+    main()
+except Exception as e:  # e.g. the database dropped mid-page; Streamlit's own rerun/stop signals pass through
+    render_error(e)

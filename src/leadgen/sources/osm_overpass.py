@@ -44,7 +44,58 @@ def api_error(service: str, resp: httpx.Response) -> str:
 # Countries covered by Europe-only Overpass servers (Geofabrik's Europe extract). Russia and Turkey are
 # left out on purpose: they are not fully in that extract, so they go to a `world` server instead.
 EUROPE = frozenset(
-    ["AD", "AL", "AT", "BA", "BE", "BG", "BY", "CH", "CY", "CZ", "DE", "DK", "EE", "ES", "FI", "FO", "FR", "GB", "GG", "GI", "GR", "HR", "HU", "IE", "IM", "IS", "IT", "JE", "LI", "LT", "LU", "LV", "MC", "MD", "ME", "MK", "MT", "NL", "NO", "PL", "PT", "RO", "RS", "SE", "SI", "SK", "SM", "UA", "VA", "XK"]
+    [
+        "AD",
+        "AL",
+        "AT",
+        "BA",
+        "BE",
+        "BG",
+        "BY",
+        "CH",
+        "CY",
+        "CZ",
+        "DE",
+        "DK",
+        "EE",
+        "ES",
+        "FI",
+        "FO",
+        "FR",
+        "GB",
+        "GG",
+        "GI",
+        "GR",
+        "HR",
+        "HU",
+        "IE",
+        "IM",
+        "IS",
+        "IT",
+        "JE",
+        "LI",
+        "LT",
+        "LU",
+        "LV",
+        "MC",
+        "MD",
+        "ME",
+        "MK",
+        "MT",
+        "NL",
+        "NO",
+        "PL",
+        "PT",
+        "RO",
+        "RS",
+        "SE",
+        "SI",
+        "SK",
+        "SM",
+        "UA",
+        "VA",
+        "XK",
+    ]
 )
 
 
@@ -103,7 +154,7 @@ class OsmOverpassSource:
                 f"no Overpass server in osm.overpass_servers covers '{location}' "
                 f"(country {geo.get('country_code') or '?'}); add one with region: world"
             )
-        attempts = 1 if len(servers) > 1 else None
+        attempts = 1 if len(servers) > 1 else 2  # with a fallback, move on quickly
         problems: list[str] = []
         for url in servers:
             host = urlsplit(url).hostname or url
@@ -112,8 +163,9 @@ class OsmOverpassSource:
                 continue
             try:
                 return await self.fetcher.api_request(
-                    "POST", url, data={"data": ql}, timeout=self.cfg.timeout_s + 15, attempts=attempts
-                )
+                    "POST", url, data={"data": ql}, timeout=self.cfg.timeout_s + 15, attempts=attempts,
+                    deadline_s=self.cfg.timeout_s + 15,  # Overpass itself gives up after timeout_s
+                )  # fmt: skip
             except httpx.HTTPStatusError as e:
                 if e.response.status_code in (403, 406):
                     self._unavailable.add(url)

@@ -91,3 +91,28 @@ async def test_body_size_is_capped(crawl_cfg):
     respx.get("https://big.com/").respond(200, text="a" * 100_000, headers=HTML)
     async with fetcher(crawl_cfg) as f:
         assert len((await f.fetch_page("https://big.com/")).text) == 20_000
+
+
+async def test_api_deadline_caps_a_slow_trickling_server(crawl_cfg):
+    """httpx timeouts are per read, so a server that keeps a request open could stall a run for 20+
+    minutes (seen with a busy public Overpass server). deadline_s caps each attempt."""
+    import asyncio
+    import time
+
+    import pytest
+
+    calls = 0
+
+    async def slow(request):
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(2)
+        return httpx.Response(200, json={})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(slow))
+    f = PoliteFetcher(crawl_cfg, UA, "TestLeadBot", client=client)
+    t0 = time.monotonic()
+    with pytest.raises(httpx.ReadTimeout, match="no complete response within"):
+        await f.api_request("POST", "https://slow.test/api/interpreter", attempts=2, deadline_s=0.2)
+    assert calls == 2 and time.monotonic() - t0 < 1.5
+    await client.aclose()

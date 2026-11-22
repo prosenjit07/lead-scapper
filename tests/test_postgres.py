@@ -246,7 +246,9 @@ def test_api_on_postgres(tmp_path, pg_dsn, pg_store):
                     sqlite_path=tmp_path / "l.db", state_path=tmp_path / "s.db", log_dir=tmp_path / "logs")  # fmt: skip
     with TestClient(create_app(cfg, Secrets(_env_file=None, database_url=pg_dsn))) as client:
         assert client.get("/health").json()["store"] == "postgres"
-        assert client.get("/leads").json()["total"] == 1
-        r = client.patch("/leads/acme.com", json={"status": "contacted", "next_follow_up_at": "2026-12-01"})
+        assert client.get("/api/v1/leads").json()["total"] == 1
+        r = client.patch(
+            "/api/v1/leads/acme.com", json={"status": "contacted", "next_follow_up_at": "2026-12-01"}
+        )
         assert r.status_code == 200 and r.json()["last_contacted_at"], r.text
-        assert client.get("/leads/ld_a/activities").json()[0]["type"] == "status_change"
+        assert client.get("/api/v1/leads/ld_a/activities").json()[0]["type"] == "status_change"

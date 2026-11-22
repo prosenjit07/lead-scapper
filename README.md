@@ -130,13 +130,13 @@ From setup to closed deal. Steps 4–10 repeat for every campaign or schedule. T
         │
   3. Preview ........ leads run <search> --dry-run --limit 20            nothing is saved
         │
-  4. Collect ........ leads run <search> · scheduler · dashboard · POST /runs
+  4. Collect ........ leads run <search> · scheduler · dashboard · POST /api/v1/runs
         │               → new leads, status = new
-  5. Review ......... dashboard · Google Sheet · leads list · GET /leads
+  5. Review ......... dashboard · Google Sheet · leads list · GET /api/v1/leads
         │               → qualified  or  do_not_contact
   6. Re-check ....... leads validate --recheck                            emails go stale
         │
-  7. Export ......... leads export · GET /export                          contactable leads only
+  7. Export ......... leads export · GET /api/v1/leads/export                          contactable leads only
         │
   8. Outreach ....... your email tool → status contacted + Activities row (email_sent)
         │
@@ -161,31 +161,31 @@ From setup to closed deal. Steps 4–10 repeat for every campaign or schedule. T
 2. **Define searches** in [`config/config.yaml`](#configuration-configconfigyaml): `keywords × locations × sources`.
    - Use cities rather than whole countries. `max_results` applies per location, and country-wide Overpass queries are slow.
    - Check that each keyword maps to OSM tags in the [industry taxonomy](src/leadgen/data/industries.yaml), or set `osm_tags`. Keywords that map to the same tags only repeat the query.
-   - `leads scheduler list` or `GET /searches` shows what is configured.
+   - `leads scheduler list` or `GET /api/v1/searches` shows what is configured.
 
-3. **Preview.** `leads run <search> --dry-run --limit 20 --out preview.csv` discovers and crawls but saves nothing. It also doesn't mark domains as crawled, so the real run still visits them. The dashboard's *Run search* tab and `POST /runs` with `"dry_run": true` do the same.
+3. **Preview.** `leads run <search> --dry-run --limit 20 --out preview.csv` discovers and crawls but saves nothing. It also doesn't mark domains as crawled, so the real run still visits them. The dashboard's *Run search* tab and `POST /api/v1/runs` with `"dry_run": true` do the same.
 
-4. **Collect.** `leads run <search>` (or `--all`); the dashboard's *Run search* tab with *Dry run* unticked; `POST /runs`; or schedules (`leads scheduler start`, or cron). Each run discovers businesses, crawls their sites, validates emails, removes duplicates, and writes new leads with `status = new`. Per-run stats go to the *Runs* tab or table (`GET /runs`). Re-running is safe:
+4. **Collect.** `leads run <search>` (or `--all`); the dashboard's *Run search* tab with *Dry run* unticked; `POST /api/v1/runs`; or schedules (`leads scheduler start`, or cron). Each run discovers businesses, crawls their sites, validates emails, removes duplicates, and writes new leads with `status = new`. Per-run stats go to the *Runs* tab or table (`GET /api/v1/runs`). Re-running is safe:
    - known businesses only get their blank fields filled;
    - domains crawled in the last 30 days are skipped;
    - suppressed emails and domains are never collected again.
 
    How a run works internally is described in [How the scraping works](#how-the-scraping-works).
 
-5. **Review and qualify.** Open the dashboard's *Leads* tab, the Google Sheet (status dropdown), `leads list --status new --email-status valid`, or `GET /leads?status=new`. Mark good fits `qualified` and bad fits `do_not_contact`, and set `owner`, `notes` and `next_follow_up_at` as needed. The CLI, dashboard and API log every status change to *Activities*; edits typed directly into the Google Sheet are not logged.
+5. **Review and qualify.** Open the dashboard's *Leads* tab, the Google Sheet (status dropdown), `leads list --status new --email-status valid`, or `GET /api/v1/leads?status=new`. Mark good fits `qualified` and bad fits `do_not_contact`, and set `owner`, `notes` and `next_follow_up_at` as needed. The CLI, dashboard and API log every status change to *Activities*; edits typed directly into the Google Sheet are not logged.
 
 6. **Re-check emails before sending.** `leads validate --recheck` repeats the DNS checks for every stored email; without `--recheck`, only risky or unchecked emails are re-checked. Domains expire and mail servers move, so do this before each campaign.
 
-7. **Export.** `leads export --status qualified --email-status valid` writes `exports/leads_<timestamp>.csv` (add `--format json` for JSON), or call `GET /export?status=qualified&email_status=valid`. Leads without an email, with an `invalid` email, or with an opt-out status are excluded by default. The dashboard's *Download CSV* button exports the filtered table **as is**, opt-outs included, so use `leads export` for email tools.
+7. **Export.** `leads export --status qualified --email-status valid` writes `exports/leads_<timestamp>.csv` (add `--format json` for JSON), or call `GET /api/v1/leads/export?status=qualified&email_status=valid`. Leads without an email, with an `invalid` email, or with an opt-out status are excluded by default. The dashboard's *Download CSV* button exports the filtered table **as is**, opt-outs included, so use `leads export` for email tools.
 
 8. **Outreach.** Send with your email tool. Say where you found the address and how to opt out (GDPR Art. 14), and check the cold-email rules of the recipient's country. Then record what you sent:
 
    ```bash
    leads status info@acme.com contacted --note "intro email, sequence step 1"
    # or, from an email tool, via the API:
-   curl -X PATCH localhost:8000/leads/info@acme.com -H 'Content-Type: application/json' \
+   curl -X PATCH localhost:8000/api/v1/leads/info@acme.com -H 'Content-Type: application/json' \
         -d '{"status": "contacted", "campaign": "q1-dental", "sequence_step": "1"}'
-   curl -X POST localhost:8000/leads/info@acme.com/activities -H 'Content-Type: application/json' \
+   curl -X POST localhost:8000/api/v1/leads/info@acme.com/activities -H 'Content-Type: application/json' \
         -d '{"type": "email_sent", "details": "intro email", "campaign": "q1-dental"}'
    ```
 
@@ -194,7 +194,7 @@ From setup to closed deal. Steps 4–10 repeat for every campaign or schedule. T
 9. **Follow up.** Move leads through `replied → meeting → won / lost`, and use `next_follow_up_at` to plan the next touch. A bounce becomes `bounced`, and an opt-out becomes `unsubscribed` or `do_not_contact`. These three statuses are excluded from every export.
 
 10. **Maintain.**
-    - **Erasure requests:** `leads forget jane@acme.com` (one person) or `leads forget acme.com` (whole company), or `POST /privacy/forget`. The data is deleted and a SHA-256 hash is kept, so it is never collected or contacted again.
+    - **Erasure requests:** `leads forget jane@acme.com` (one person) or `leads forget acme.com` (whole company), or `POST /api/v1/privacy/erasure`. The data is deleted and a SHA-256 hash is kept, so it is never collected or contacted again.
     - **Retention:** `leads purge --dry-run`, then `leads purge`. This deletes leads older than `retention_days` that were never engaged; opt-outs become suppression hashes first.
     - Scheduled runs start again at step 4. They skip everything already known or suppressed.
 
@@ -274,25 +274,29 @@ Both are generated from the code. After changing the API, regenerate them (a tes
 uv run leads api --openapi docs/swagger.yaml && uv run leads api --openapi docs/openapi.json
 ```
 
+**Conventions.** All endpoints live under **`/api/v1`**. A breaking change would get a new prefix (`/api/v2`) while `/api/v1` keeps working, so integrations don't break on upgrade. `/health` stays unversioned for uptime monitors. Every operation has a readable `operationId` (`list_leads`, `export_leads`, `request_erasure` …), which client generators turn into method names. Exports are named after their filters and the date, e.g. `GET /api/v1/leads/export?city=Berlin&email_status=valid` downloads `leads_berlin_valid_2026-11-22.csv`.
+
+> The dashboard's *Download CSV* button produces links like `http://localhost:8501/media/b89a9a…csv`. Those are Streamlit's temporary internal links: random names that expire with the browser session. They are not an API. For scripts and email tools use `/api/v1/leads/export`; the dashboard's *Leads* tab shows the matching link for its current filters.
+
 | Endpoint | Purpose |
 |---|---|
-| `GET /leads` | Filter (`industry`, `country`, `city`, `status`, `email_status`, `source`, `q`; repeat a parameter to match any value) and paginate (`limit`, `offset`), newest first |
-| `GET /leads/{lead_ref}` | One lead by `lead_id`, email or domain |
-| `PATCH /leads/{lead_ref}` | CRM fields only: `status`, `append_note`, `notes`, `owner`, `tags`, `campaign`, `sequence_step`, `last_contacted_at`, `next_follow_up_at`. A status change is logged to Activities, as with `leads status` |
-| `GET` / `POST /leads/{lead_ref}/activities` | Read / log events such as `email_sent`, `reply`, `call` |
-| `GET /searches` | Searches from `config.yaml` with their schedules |
-| `POST /runs` | Start a configured search in the background (`dry_run`, `limit`, `sources`, `force`). Returns `202` and a job |
-| `GET /jobs/{job_id}` · `GET /jobs` | Progress of API-started runs (kept in memory until the server restarts) |
-| `GET /runs` | Run history from all interfaces |
-| `GET /export?format=csv\|json` | Download contactable leads (same filters; `include_opted_out=true` for everything) |
-| `POST /privacy/forget` | GDPR erasure + suppression, like `leads forget` (**irreversible**) |
+| `GET /api/v1/leads` | Filter (`industry`, `country`, `city`, `status`, `email_status`, `source`, `q`; repeat a parameter to match any value) and paginate (`limit`, `offset`), newest first |
+| `GET /api/v1/leads/{lead_ref}` | One lead by `lead_id`, email or domain |
+| `PATCH /api/v1/leads/{lead_ref}` | CRM fields only: `status`, `append_note`, `notes`, `owner`, `tags`, `campaign`, `sequence_step`, `last_contacted_at`, `next_follow_up_at`. A status change is logged to Activities, as with `leads status` |
+| `GET` / `POST /api/v1/leads/{lead_ref}/activities` | Read / log events such as `email_sent`, `reply`, `call` |
+| `GET /api/v1/searches` | Searches from `config.yaml` with their schedules |
+| `POST /api/v1/runs` | Start a configured search in the background (`dry_run`, `limit`, `sources`, `force`). Returns `202` and a job |
+| `GET /api/v1/jobs/{job_id}` · `GET /api/v1/jobs` | Progress of API-started runs (kept in memory until the server restarts) |
+| `GET /api/v1/runs` | Run history from all interfaces |
+| `GET /api/v1/leads/export?format=csv\|json` | Download contactable leads (same filters; `include_opted_out=true` for everything) |
+| `POST /api/v1/privacy/erasure` | GDPR erasure + suppression, like `leads forget` (**irreversible**) |
 | `GET /health` | Liveness, no auth |
 
 ```bash
-curl "localhost:8000/leads?status=new&email_status=valid&limit=20"
-curl -X PATCH localhost:8000/leads/acme.com -H 'Content-Type: application/json' \
+curl "localhost:8000/api/v1/leads?status=new&email_status=valid&limit=20"
+curl -X PATCH localhost:8000/api/v1/leads/acme.com -H 'Content-Type: application/json' \
      -d '{"status": "contacted", "campaign": "q1-dental", "sequence_step": "1", "append_note": "intro sent"}'
-curl -X POST localhost:8000/runs -H 'Content-Type: application/json' -d '{"search": "dental-uk", "dry_run": true}'
+curl -X POST localhost:8000/api/v1/runs -H 'Content-Type: application/json' -d '{"search": "dental-uk", "dry_run": true}'
 ```
 
 **Security.** By default the API listens on `127.0.0.1` only. To reach it from another machine, set `LEADGEN_API_KEY` in `.env` (e.g. `openssl rand -hex 32`); `leads api --host 0.0.0.0` refuses to start without it. Clients then send `X-API-Key: <key>` (in Swagger UI: **Authorize**). Use HTTPS (a reverse proxy) for anything beyond your own network: the API serves personal data.
@@ -543,7 +547,8 @@ lead-scraper/
 │   │   └── state.py               # crawl state, not leads: when each domain was crawled, cached geocodes
 │   │
 │   ├── dashboard/
-│   │   └── app.py                 # Streamlit UI: KPIs, charts, editable leads table, run a search, run history
+│   │   ├── app.py                 # Streamlit UI: KPIs, charts, editable leads table, run a search, run history
+│   │   └── errors.py              # turns errors into plain messages (restart / Retry / fix config) instead of tracebacks
 │   │
 │   └── data/                      # files shipped inside the package
 │       ├── config.example.yaml    # template copied to config/config.yaml by `leads init`
@@ -578,6 +583,7 @@ lead-scraper/
 | Symptom | Fix |
 |---|---|
 | `no Overpass server answered (… timed out (server busy) …)` | The public Overpass servers are busy. Retry later, or add another public instance from the [OSM wiki](https://wiki.openstreetmap.org/wiki/Overpass_API#Public_Overpass_API_instances) under `osm.overpass_servers` (mark Europe-only servers `region: europe`). `leads doctor` checks each server. Other locations in the same run are unaffected. |
+| Dashboard says *The app's code was updated while the dashboard was running* | A dashboard started before an update still has old code in memory. Press Ctrl+C in its terminal and run `uv run leads dashboard` again (same for `leads api`). Other dashboard errors show a plain message with **Retry**; the full error is under *Technical details* and in `logs/leadgen.log`. |
 | `Port 8501 (or 8000) is already in use` | A dashboard (or API) is already running: open its URL, stop it with Ctrl+C in its terminal, or start another with `--port 8502`. `lsof -i :8501` shows what holds the port. |
 | `PostgreSQL store needs: uv sync --extra postgres …` | An install removed the extra: run `uv sync --extra dashboard --extra api --extra postgres`. |
 | `Overpass HTTP 406/403 … refused this client` | The public Overpass server filters some clients. Read its [usage policy](https://dev.overpass-api.de/overpass-doc/en/preface/commons.html), make sure `user_agent` names your application with a real contact URL/email, or set `osm.overpass_url` to another instance you may use (e.g. self-hosted). |
@@ -604,3 +610,21 @@ uv run ruff check src tests && uv run ruff format src tests
 ```
 
 Data from OpenStreetMap is © OpenStreetMap contributors (ODbL). Keep the `source_url` / `external_id` attribution.
+
+
+## SQL queries (for TablePlus or Neon's SQL editor)
+
+-- All counts at once
+SELECT count(*)                                                          AS total_leads,
+       count(*) FILTER (WHERE status = 'new')                            AS status_new,      -- not yet worked
+       count(*) FILTER (WHERE created_at >= now() - interval '24 hours') AS added_last_24h,  -- newly collected
+       count(*) FILTER (WHERE created_at >= now() - interval '7 days')   AS added_last_7_days
+FROM leads;
+
+-- How many leads each run added
+SELECT run_id, search, started_at, new, duplicates, errors
+FROM runs ORDER BY started_at DESC;
+
+
+
+

@@ -31,13 +31,16 @@ from leadgen.models import LEAD_COLUMNS, RUN_COLUMNS, EmailStatus, Lead, LeadSta
 from leadgen.runner import run_search
 from leadgen.store import open_store
 from leadgen.store.base import LeadStore
-from leadgen.views import append_note, filter_leads, find_lead, status_change
+from leadgen.views import append_note, export_filename, filter_leads, find_lead, status_change
 
 log = get_logger("api")
 
 DESCRIPTION = """
 REST access to the leads collected by **leadgen**: query and update leads, log CRM activity, start
 configured searches, export contactable leads, and handle GDPR erasure requests.
+
+**Base path `/api/v1`.** Breaking changes will get a new prefix (`/api/v2`) while `/api/v1` keeps working,
+so integrations don't break on upgrade. `/health` is unversioned, for uptime monitors and load balancers.
 
 **Authentication.** If `LEADGEN_API_KEY` is set in `.env`, every endpoint except `/health` requires the
 header `X-API-Key: <key>` (use **Authorize** above). Without a key the server only listens on localhost.
@@ -47,8 +50,8 @@ default store is a Google Sheet. `email_status=valid` means the domain accepts m
 business, not that the mailbox was confirmed.
 
 **Compliance.** Skip leads whose status is `unsubscribed`, `do_not_contact` or `bounced` (the
-`/export` endpoint already does), and say in your first email where you got the address and how to opt
-out (GDPR Art. 14). Use `POST /privacy/forget` for erasure requests.
+`/api/v1/leads/export` endpoint already does), and say in your first email where you got the address and
+how to opt out (GDPR Art. 14). Use `POST /api/v1/privacy/erasure` for erasure requests.
 """.strip()
 
 TAGS = [
@@ -66,6 +69,7 @@ TAGS = [
 RUN_COUNT_FIELDS = ("discovered", "crawled", "new", "duplicates", "merged", "suppressed", "skipped", "errors")
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 MAX_JOBS_KEPT = 100
+API_PREFIX = "/api/v1"
 
 
 # ============================================================================ schemas
@@ -177,7 +181,7 @@ class JobStatus(StrEnum):
 
 class Job(BaseModel):
     """A run started through the API. Jobs live in memory and are lost when the server restarts;
-    finished runs are also logged in `GET /runs`."""
+    finished runs are also logged in `GET /api/v1/runs`."""
 
     job_id: str
     search: str
@@ -200,7 +204,7 @@ class RunRequest(BaseModel):
         json_schema_extra={"examples": [{"search": "dental-uk", "dry_run": True, "limit": 10}]},
     )
 
-    search: str = Field(description="Name of a search in config.yaml (see `GET /searches`)")
+    search: str = Field(description="Name of a search in config.yaml (see `GET /api/v1/searches`)")
     sources: list[Literal["osm", "google_places"]] | None = Field(
         None, description="Override the search's sources"
     )
@@ -326,11 +330,12 @@ NOT_FOUND = {404: {"description": "No lead matches the lead_id, email or domain"
 
 
 # ============================================================================ routes
-leads_router = APIRouter(prefix="/leads", tags=["leads"])
-activities_router = APIRouter(prefix="/leads", tags=["activities"])
-runs_router = APIRouter(tags=["runs"])
-export_router = APIRouter(tags=["export"])
-privacy_router = APIRouter(prefix="/privacy", tags=["privacy"])
+leads_router = APIRouter(prefix=f"{API_PREFIX}/leads", tags=["leads"])
+activities_router = APIRouter(prefix=f"{API_PREFIX}/leads", tags=["activities"])
+runs_router = APIRouter(prefix=API_PREFIX, tags=["runs"])
+# /leads/export must be registered before /leads/{lead_ref}, or "export" would be taken as a lead_ref.
+export_router = APIRouter(prefix=f"{API_PREFIX}/leads", tags=["export"])
+privacy_router = APIRouter(prefix=f"{API_PREFIX}/privacy", tags=["privacy"])
 system_router = APIRouter(tags=["system"])
 
 
@@ -377,7 +382,7 @@ def update_lead(store: StoreDep, lead_ref: LeadRef, body: LeadUpdate) -> Lead:
 
 
 @activities_router.get("/{lead_ref}/activities", summary="List a lead's activities", responses=NOT_FOUND)
-def list_activities(store: StoreDep, lead_ref: LeadRef) -> list[Activity]:
+def list_lead_activities(store: StoreDep, lead_ref: LeadRef) -> list[Activity]:
     """Oldest first."""
     lead = _get_lead(store, lead_ref)
     return [Activity(**row) for row in store.list_activities(lead.lead_id)]
@@ -386,9 +391,9 @@ def list_activities(store: StoreDep, lead_ref: LeadRef) -> list[Activity]:
 @activities_router.post(
     "/{lead_ref}/activities", status_code=201, summary="Log an activity", responses=NOT_FOUND
 )
-def add_activity(store: StoreDep, lead_ref: LeadRef, body: ActivityCreate) -> Activity:
+def create_lead_activity(store: StoreDep, lead_ref: LeadRef, body: ActivityCreate) -> Activity:
     """Record a CRM event such as `email_sent` or `reply`. This does not change the lead; send a
-    `PATCH /leads/{lead_ref}` too if the status or `last_contacted_at` should change."""
+    `PATCH /api/v1/leads/{lead_ref}` too if the status or `last_contacted_at` should change."""
     lead = _get_lead(store, lead_ref)
     store.add_activity(lead.lead_id, body.type, body.details, body.campaign)
     return Activity(**store.list_activities(lead.lead_id)[-1])
@@ -429,7 +434,7 @@ def list_runs(store: StoreDep, limit: Annotated[int, Query(ge=1, le=500)] = 20) 
 )
 def start_run(state: StateDep, body: RunRequest, response: Response) -> Job:
     """Runs in the background, since a search can take several minutes (websites are crawled politely).
-    Poll `GET /jobs/{job_id}` until `status` is `succeeded` or `failed`."""
+    Poll `GET /api/v1/jobs/{job_id}` until `status` is `succeeded` or `failed`."""
     try:
         search = state.cfg.get_search(body.search)
     except ConfigError as e:
@@ -448,7 +453,7 @@ def start_run(state: StateDep, body: RunRequest, response: Response) -> Job:
     threading.Thread(
         target=_run_job, args=(state, job.job_id, search, body, sources), name=job.job_id, daemon=True
     ).start()
-    response.headers["Location"] = f"/jobs/{job.job_id}"
+    response.headers["Location"] = f"{API_PREFIX}/jobs/{job.job_id}"
     return job.model_copy()
 
 
@@ -506,7 +511,7 @@ def get_job(state: StateDep, job_id: str) -> Job:
                                  "application/json": {"schema": {"type": "array",
                                                                  "items": {"$ref": "#/components/schemas/Lead"}}}}}},
 )  # fmt: skip
-def export(
+def export_leads(
     store: StoreDep,
     filters: FiltersDep,
     format: Annotated[Literal["csv", "json"], Query(description="File format")] = "csv",
@@ -519,7 +524,6 @@ def export(
     leads = filter_leads(store.load_leads(), **filters, contactable_only=not include_opted_out)
     leads.sort(key=lambda lead: lead.created_at, reverse=True)
     rows = [lead.to_row() for lead in leads]
-    stamp = f"{datetime.now():%Y%m%d_%H%M%S}"
     if format == "json":
         body, media = json.dumps(rows, ensure_ascii=False, indent=2), "application/json"
     else:
@@ -529,14 +533,14 @@ def export(
         writer.writerows(rows)
         body, media = buf.getvalue(), "text/csv; charset=utf-8"
     headers = {
-        "Content-Disposition": f'attachment; filename="leads_{stamp}.{format}"',
+        "Content-Disposition": f'attachment; filename="{export_filename(filters, format)}"',
         "X-Total-Count": str(len(rows)),
     }
     return Response(body, media_type=media, headers=headers)
 
 
-@privacy_router.post("/forget", summary="Erase a person or company (GDPR Art. 17)")
-def forget(state: StateDep, store: StoreDep, body: ForgetRequest) -> ForgetResult:
+@privacy_router.post("/erasure", summary="Erase a person or company (GDPR Art. 17 right to erasure)")
+def request_erasure(state: StateDep, store: StoreDep, body: ForgetRequest) -> ForgetResult:
     """**Irreversible.** An email removes that address everywhere (and deletes the lead if it was the
     only way to contact it). A domain deletes every lead for that company. Either way a SHA-256 hash is
     added to the suppression list, so it is never collected or contacted again."""
@@ -560,7 +564,7 @@ def forget(state: StateDep, store: StoreDep, body: ForgetRequest) -> ForgetResul
 
 
 @system_router.get("/health", summary="Health check")
-def health(state: StateDep) -> Health:
+def get_health(state: StateDep) -> Health:
     """No authentication and no store access."""
     return Health(version=__version__, store=state.store_kind)
 
@@ -574,12 +578,15 @@ def create_app(
         version=__version__,
         description=DESCRIPTION,
         openapi_tags=TAGS,
+        # operationId = the function name (list_leads, export_leads …) instead of FastAPI's
+        # list_leads_api_v1_leads_get; client generators turn these into method names.
+        generate_unique_id_function=lambda route: route.name,
         license_info={"name": "Data from OpenStreetMap is © OpenStreetMap contributors (ODbL)",
                       "url": "https://www.openstreetmap.org/copyright"},
     )  # fmt: skip
     app.state.leadgen = ApiState(cfg, secrets, store_kind, store)
     auth = [Depends(require_api_key)]
-    for router in (leads_router, activities_router, runs_router, export_router, privacy_router):
+    for router in (export_router, leads_router, activities_router, runs_router, privacy_router):
         app.include_router(router, dependencies=auth)
     app.include_router(system_router)
 
