@@ -1,11 +1,12 @@
-"""Filtering / grouping helpers shared by the CLI and the dashboard."""
+"""Filtering / grouping / status helpers shared by the CLI, the dashboard and the REST API."""
 
 from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Iterable
+from datetime import UTC, datetime
 
-from leadgen.models import OPT_OUT_STATUSES, Lead
+from leadgen.models import OPT_OUT_STATUSES, Lead, LeadStatus, utcnow_iso
 
 OPT_OUT_VALUES = {s.value for s in OPT_OUT_STATUSES}
 
@@ -68,3 +69,21 @@ def find_lead(leads: Iterable[Lead], identifier: str) -> Lead | None:
         if ident in (lead.lead_id.lower(), lead.email.lower(), lead.domain.lower()):
             return lead
     return None
+
+
+def append_note(notes: str, note: str) -> str:
+    """Existing notes plus a new line `[YYYY-MM-DD] note`."""
+    return (notes + "\n" if notes else "") + f"[{datetime.now(UTC):%Y-%m-%d}] {note}"
+
+
+def status_change(lead: Lead, new_status: str, note: str | None = None) -> tuple[dict[str, str], str]:
+    """Fields to write and the Activities `details` text for a pipeline status change.
+    Moving to `contacted` stamps last_contacted_at; a note is appended to notes with today's date."""
+    new_status = str(LeadStatus(new_status).value)
+    fields = {"status": new_status}
+    if new_status == LeadStatus.CONTACTED:
+        fields["last_contacted_at"] = utcnow_iso()
+    if note:
+        fields["notes"] = append_note(lead.notes, note)
+    details = f"{lead.status} -> {new_status}" + (f": {note}" if note else "")
+    return fields, details

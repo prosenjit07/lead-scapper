@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 def utcnow_iso() -> str:
@@ -85,43 +85,49 @@ class Lead(BaseModel):
 
     model_config = ConfigDict(validate_assignment=False, extra="ignore")
 
-    lead_id: str = ""
-    status: str = LeadStatus.NEW.value
+    # Descriptions show up in the REST API's OpenAPI/Swagger docs. All values are strings ("" = unknown)
+    # because Google Sheets cells are text.
+    lead_id: str = Field(
+        "", description="Stable id (`ld_` + 12 hex chars), derived from email/domain/name+city"
+    )
+    status: str = Field(LeadStatus.NEW.value, description="Pipeline status: " + " | ".join(LeadStatus))
     company_name: str = ""
-    website: str = ""
-    domain: str = ""
-    email: str = ""
-    email_status: str = ""
-    email_type: str = ""
-    additional_emails: str = ""  # comma separated
+    website: str = Field("", description="The business's own website (normalized URL)")
+    domain: str = Field("", description="Registered domain of `website`, e.g. `acme.co.uk`")
+    email: str = Field("", description="Best email found (lowercase)")
+    email_status: str = Field(
+        "", description="valid | risky | invalid | missing (DNS/MX based, no SMTP probing)"
+    )
+    email_type: str = Field("", description="personal | role (info@, sales@ …) | free_mail")
+    additional_emails: str = Field("", description="Other emails found, comma separated")
     contact_name: str = ""
     contact_title: str = ""
-    phone: str = ""
+    phone: str = Field("", description="E.164, e.g. `+441179240678`")
     address: str = ""
     city: str = ""
     region: str = ""
     country: str = ""
-    industry: str = ""
-    linkedin_url: str = ""
+    industry: str = Field("", description="Normalized industry label, e.g. `Healthcare / Dental`")
+    linkedin_url: str = Field("", description="Only if the company links it on its own site")
     twitter_url: str = ""
     facebook_url: str = ""
     instagram_url: str = ""
-    source: str = ""
-    source_url: str = ""
-    external_id: str = ""
+    source: str = Field("", description="Discovery source: osm | google_places | seed")
+    source_url: str = Field("", description="Page where the email/contact data was found (GDPR provenance)")
+    external_id: str = Field("", description="Source reference, e.g. `node/123` (OSM) or a Google place id")
     search_keyword: str = ""
     search_location: str = ""
-    lawful_basis: str = ""
-    tags: str = ""
+    lawful_basis: str = Field("", description="GDPR lawful basis recorded at collection")
+    tags: str = Field("", description="Comma separated")
     owner: str = ""
     notes: str = ""
-    last_contacted_at: str = ""
-    next_follow_up_at: str = ""
+    last_contacted_at: str = Field("", description="ISO 8601 timestamp")
+    next_follow_up_at: str = Field("", description="ISO 8601 date or timestamp")
     campaign: str = ""
     sequence_step: str = ""
-    run_id: str = ""
-    created_at: str = ""
-    updated_at: str = ""
+    run_id: str = Field("", description="Run that created the lead")
+    created_at: str = Field("", description="ISO 8601 UTC")
+    updated_at: str = Field("", description="ISO 8601 UTC")
 
     @classmethod
     def from_row(cls, row: dict[str, object]) -> Lead:

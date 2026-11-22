@@ -1,0 +1,1317 @@
+openapi: 3.1.0
+info:
+  title: leadgen API
+  description: |-
+    REST access to the leads collected by **leadgen**: query and update leads, log CRM activity, start
+    configured searches, export contactable leads, and handle GDPR erasure requests.
+
+    **Authentication.** If `LEADGEN_API_KEY` is set in `.env`, every endpoint except `/health` requires the
+    header `X-API-Key: <key>` (use **Authorize** above). Without a key the server only listens on localhost.
+
+    **Data.** One lead per company. All lead fields are strings, and `""` means unknown, because the
+    default store is a Google Sheet. `email_status=valid` means the domain accepts mail and matches the
+    business, not that the mailbox was confirmed.
+
+    **Compliance.** Skip leads whose status is `unsubscribed`, `do_not_contact` or `bounced` (the
+    `/export` endpoint already does), and say in your first email where you got the address and how to opt
+    out (GDPR Art. 14). Use `POST /privacy/forget` for erasure requests.
+  license:
+    name: Data from OpenStreetMap is © OpenStreetMap contributors (ODbL)
+    url: https://www.openstreetmap.org/copyright
+  version: 0.1.0
+paths:
+  /leads:
+    get:
+      tags:
+      - leads
+      summary: List leads
+      description: |-
+        Leads matching all the given filters, newest first. Repeat a parameter to match any of several
+        values, e.g. `?city=Bristol&city=Leeds`.
+      operationId: list_leads_leads_get
+      security:
+      - APIKeyHeader: []
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 1000
+          minimum: 1
+          default: 100
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      - name: industry
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: array
+            items:
+              type: string
+          - type: 'null'
+          description: Exact industry label, case-insensitive (repeatable)
+          title: Industry
+        description: Exact industry label, case-insensitive (repeatable)
+      - name: country
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: array
+            items:
+              type: string
+          - type: 'null'
+          description: e.g. `United Kingdom` (repeatable)
+          title: Country
+        description: e.g. `United Kingdom` (repeatable)
+      - name: city
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: array
+            items:
+              type: string
+          - type: 'null'
+          description: Repeatable
+          title: City
+        description: Repeatable
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: array
+            items:
+              $ref: '#/components/schemas/LeadStatus'
+          - type: 'null'
+          description: Repeatable
+          title: Status
+        description: Repeatable
+      - name: email_status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: array
+            items:
+              $ref: '#/components/schemas/EmailStatus'
+          - type: 'null'
+          description: Repeatable
+          title: Email Status
+        description: Repeatable
+      - name: source
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: array
+            items:
+              enum:
+              - osm
+              - google_places
+              - seed
+              type: string
+          - type: 'null'
+          description: Repeatable
+          title: Source
+        description: Repeatable
+      - name: q
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Text search in company, email, domain, contact, notes, tags
+          title: Q
+        description: Text search in company, email, domain, contact, notes, tags
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LeadPage'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /leads/{lead_ref}:
+    get:
+      tags:
+      - leads
+      summary: Get one lead
+      description: Look a lead up by its `lead_id`, its primary email, or its domain.
+      operationId: get_lead_leads__lead_ref__get
+      security:
+      - APIKeyHeader: []
+      parameters:
+      - name: lead_ref
+        in: path
+        required: true
+        schema:
+          type: string
+          description: The lead's `lead_id`, primary email, or domain
+          examples:
+          - acme.com
+          title: Lead Ref
+        description: The lead's `lead_id`, primary email, or domain
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Lead'
+        '404':
+          description: No lead matches the lead_id, email or domain
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    patch:
+      tags:
+      - leads
+      summary: Update a lead's CRM fields
+      description: |-
+        Change pipeline status, owner, notes, campaign, follow-up dates and so on. A status change is
+        logged to Activities, as with `leads status`.
+      operationId: update_lead_leads__lead_ref__patch
+      security:
+      - APIKeyHeader: []
+      parameters:
+      - name: lead_ref
+        in: path
+        required: true
+        schema:
+          type: string
+          description: The lead's `lead_id`, primary email, or domain
+          examples:
+          - acme.com
+          title: Lead Ref
+        description: The lead's `lead_id`, primary email, or domain
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LeadUpdate'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Lead'
+        '404':
+          description: No lead matches the lead_id, email or domain
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /leads/{lead_ref}/activities:
+    get:
+      tags:
+      - activities
+      summary: List a lead's activities
+      description: Oldest first.
+      operationId: list_activities_leads__lead_ref__activities_get
+      security:
+      - APIKeyHeader: []
+      parameters:
+      - name: lead_ref
+        in: path
+        required: true
+        schema:
+          type: string
+          description: The lead's `lead_id`, primary email, or domain
+          examples:
+          - acme.com
+          title: Lead Ref
+        description: The lead's `lead_id`, primary email, or domain
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Activity'
+                title: Response List Activities Leads  Lead Ref  Activities Get
+        '404':
+          description: No lead matches the lead_id, email or domain
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    post:
+      tags:
+      - activities
+      summary: Log an activity
+      description: |-
+        Record a CRM event such as `email_sent` or `reply`. This does not change the lead; send a
+        `PATCH /leads/{lead_ref}` too if the status or `last_contacted_at` should change.
+      operationId: add_activity_leads__lead_ref__activities_post
+      security:
+      - APIKeyHeader: []
+      parameters:
+      - name: lead_ref
+        in: path
+        required: true
+        schema:
+          type: string
+          description: The lead's `lead_id`, primary email, or domain
+          examples:
+          - acme.com
+          title: Lead Ref
+        description: The lead's `lead_id`, primary email, or domain
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActivityCreate'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Activity'
+        '404':
+          description: No lead matches the lead_id, email or domain
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /searches:
+    get:
+      tags:
+      - runs
+      summary: List configured searches
+      description: Searches defined in `config.yaml`, with their schedules. Restart the API after editing the config.
+      operationId: list_searches_searches_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/SearchInfo'
+                type: array
+                title: Response List Searches Searches Get
+      security:
+      - APIKeyHeader: []
+  /runs:
+    get:
+      tags:
+      - runs
+      summary: Run history
+      description: Finished runs (from the CLI, scheduler, dashboard or API), newest first.
+      operationId: list_runs_runs_get
+      security:
+      - APIKeyHeader: []
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 500
+          minimum: 1
+          default: 20
+          title: Limit
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RunRecord'
+                title: Response List Runs Runs Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    post:
+      tags:
+      - runs
+      summary: Start a configured search
+      description: |-
+        Runs in the background, since a search can take several minutes (websites are crawled politely).
+        Poll `GET /jobs/{job_id}` until `status` is `succeeded` or `failed`.
+      operationId: start_run_runs_post
+      security:
+      - APIKeyHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunRequest'
+      responses:
+        '202':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '404':
+          description: Unknown search
+        '409':
+          description: That search is already running
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /jobs:
+    get:
+      tags:
+      - runs
+      summary: List API-started runs
+      description: Runs started through this API since the server started, newest first (without dry-run leads).
+      operationId: list_jobs_jobs_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/Job'
+                type: array
+                title: Response List Jobs Jobs Get
+      security:
+      - APIKeyHeader: []
+  /jobs/{job_id}:
+    get:
+      tags:
+      - runs
+      summary: Get a run's progress
+      operationId: get_job_jobs__job_id__get
+      security:
+      - APIKeyHeader: []
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Job Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '404':
+          description: Unknown job
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /export:
+    get:
+      tags:
+      - export
+      summary: Export leads as CSV or JSON
+      description: |-
+        For an email tool. By default only *contactable* leads are included: they have an email that
+        isn't `invalid`, and their status isn't `unsubscribed`, `do_not_contact` or `bounced`.
+      operationId: export_export_get
+      security:
+      - APIKeyHeader: []
+      parameters:
+      - name: format
+        in: query
+        required: false
+        schema:
+          enum:
+          - csv
+          - json
+          type: string
+          description: File format
+          default: csv
+          title: Format
+        description: File format
+      - name: include_opted_out
+        in: query
+        required: false
+        schema:
+          type: boolean
+          description: Include leads without an email, with an invalid email, or opted out
+          default: false
+          title: Include Opted Out
+        description: Include leads without an email, with an invalid email, or opted out
+      - name: industry
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: array
+            items:
+              type: string
+          - type: 'null'
+          description: Exact industry label, case-insensitive (repeatable)
+          title: Industry
+        description: Exact industry label, case-insensitive (repeatable)
+      - name: country
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: array
+            items:
+              type: string
+          - type: 'null'
+          description: e.g. `United Kingdom` (repeatable)
+          title: Country
+        description: e.g. `United Kingdom` (repeatable)
+      - name: city
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: array
+            items:
+              type: string
+          - type: 'null'
+          description: Repeatable
+          title: City
+        description: Repeatable
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: array
+            items:
+              $ref: '#/components/schemas/LeadStatus'
+          - type: 'null'
+          description: Repeatable
+          title: Status
+        description: Repeatable
+      - name: email_status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: array
+            items:
+              $ref: '#/components/schemas/EmailStatus'
+          - type: 'null'
+          description: Repeatable
+          title: Email Status
+        description: Repeatable
+      - name: source
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: array
+            items:
+              enum:
+              - osm
+              - google_places
+              - seed
+              type: string
+          - type: 'null'
+          description: Repeatable
+          title: Source
+        description: Repeatable
+      - name: q
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Text search in company, email, domain, contact, notes, tags
+          title: Q
+        description: Text search in company, email, domain, contact, notes, tags
+      responses:
+        '200':
+          description: A file download (all lead fields)
+          content:
+            text/csv:
+              schema:
+                type: string
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Lead'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /privacy/forget:
+    post:
+      tags:
+      - privacy
+      summary: Erase a person or company (GDPR Art. 17)
+      description: |-
+        **Irreversible.** An email removes that address everywhere (and deletes the lead if it was the
+        only way to contact it). A domain deletes every lead for that company. Either way a SHA-256 hash is
+        added to the suppression list, so it is never collected or contacted again.
+      operationId: forget_privacy_forget_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ForgetRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ForgetResult'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      security:
+      - APIKeyHeader: []
+  /health:
+    get:
+      tags:
+      - system
+      summary: Health check
+      description: No authentication and no store access.
+      operationId: health_health_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+components:
+  schemas:
+    Activity:
+      properties:
+        lead_id:
+          type: string
+          title: Lead Id
+        timestamp:
+          type: string
+          title: Timestamp
+          description: ISO 8601 UTC
+        type:
+          type: string
+          title: Type
+        details:
+          type: string
+          title: Details
+          default: ''
+        campaign:
+          type: string
+          title: Campaign
+          default: ''
+      type: object
+      required:
+      - lead_id
+      - timestamp
+      - type
+      title: Activity
+    ActivityCreate:
+      properties:
+        type:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{0,39}$
+          title: Type
+          description: Event type, e.g. `email_sent`, `reply`, `call`, `meeting`, `bounce`
+          examples:
+          - email_sent
+        details:
+          type: string
+          maxLength: 2000
+          title: Details
+          default: ''
+          examples:
+          - Intro email, sequence step 1
+        campaign:
+          type: string
+          maxLength: 200
+          title: Campaign
+          default: ''
+          examples:
+          - q1-dental
+      additionalProperties: false
+      type: object
+      required:
+      - type
+      title: ActivityCreate
+    EmailStatus:
+      type: string
+      enum:
+      - valid
+      - risky
+      - invalid
+      - missing
+      title: EmailStatus
+    ForgetRequest:
+      properties:
+        identifier:
+          type: string
+          title: Identifier
+          description: An email address (erases that person) or a domain (erases the whole company)
+          examples:
+          - jane@acme.com
+          - acme.com
+        reason:
+          type: string
+          maxLength: 200
+          title: Reason
+          default: erasure request
+      additionalProperties: false
+      type: object
+      required:
+      - identifier
+      title: ForgetRequest
+    ForgetResult:
+      properties:
+        kind:
+          type: string
+          enum:
+          - email
+          - domain
+          title: Kind
+        value:
+          type: string
+          title: Value
+        leads_deleted:
+          type: integer
+          title: Leads Deleted
+        emails_scrubbed:
+          type: integer
+          title: Emails Scrubbed
+          description: Leads kept but with the email (and its contact) removed
+      type: object
+      required:
+      - kind
+      - value
+      - leads_deleted
+      - emails_scrubbed
+      title: ForgetResult
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
+    Health:
+      properties:
+        status:
+          type: string
+          const: ok
+          title: Status
+          default: ok
+        version:
+          type: string
+          title: Version
+        store:
+          type: string
+          title: Store
+      type: object
+      required:
+      - version
+      - store
+      title: Health
+    Job:
+      properties:
+        job_id:
+          type: string
+          title: Job Id
+        search:
+          type: string
+          title: Search
+        sources:
+          items:
+            type: string
+          type: array
+          title: Sources
+        dry_run:
+          type: boolean
+          title: Dry Run
+        status:
+          $ref: '#/components/schemas/JobStatus'
+        created_at:
+          type: string
+          title: Created At
+        started_at:
+          type: string
+          title: Started At
+          default: ''
+        finished_at:
+          type: string
+          title: Finished At
+          default: ''
+        error:
+          type: string
+          title: Error
+          description: Set when status is `failed`
+          default: ''
+        stats:
+          anyOf:
+          - $ref: '#/components/schemas/RunRecord'
+          - type: 'null'
+          description: Set when the run finished
+        leads:
+          items:
+            $ref: '#/components/schemas/Lead'
+          type: array
+          title: Leads
+          description: 'Dry runs only: the leads that would be added'
+      type: object
+      required:
+      - job_id
+      - search
+      - sources
+      - dry_run
+      - status
+      - created_at
+      title: Job
+      description: |-
+        A run started through the API. Jobs live in memory and are lost when the server restarts;
+        finished runs are also logged in `GET /runs`.
+    JobStatus:
+      type: string
+      enum:
+      - queued
+      - running
+      - succeeded
+      - failed
+      title: JobStatus
+    Lead:
+      properties:
+        lead_id:
+          type: string
+          title: Lead Id
+          description: Stable id (`ld_` + 12 hex chars), derived from email/domain/name+city
+          default: ''
+        status:
+          type: string
+          title: Status
+          description: 'Pipeline status: new | qualified | contacted | replied | meeting | won | lost | bounced
+            | unsubscribed | do_not_contact'
+          default: new
+        company_name:
+          type: string
+          title: Company Name
+          default: ''
+        website:
+          type: string
+          title: Website
+          description: The business's own website (normalized URL)
+          default: ''
+        domain:
+          type: string
+          title: Domain
+          description: Registered domain of `website`, e.g. `acme.co.uk`
+          default: ''
+        email:
+          type: string
+          title: Email
+          description: Best email found (lowercase)
+          default: ''
+        email_status:
+          type: string
+          title: Email Status
+          description: valid | risky | invalid | missing (DNS/MX based, no SMTP probing)
+          default: ''
+        email_type:
+          type: string
+          title: Email Type
+          description: personal | role (info@, sales@ …) | free_mail
+          default: ''
+        additional_emails:
+          type: string
+          title: Additional Emails
+          description: Other emails found, comma separated
+          default: ''
+        contact_name:
+          type: string
+          title: Contact Name
+          default: ''
+        contact_title:
+          type: string
+          title: Contact Title
+          default: ''
+        phone:
+          type: string
+          title: Phone
+          description: E.164, e.g. `+441179240678`
+          default: ''
+        address:
+          type: string
+          title: Address
+          default: ''
+        city:
+          type: string
+          title: City
+          default: ''
+        region:
+          type: string
+          title: Region
+          default: ''
+        country:
+          type: string
+          title: Country
+          default: ''
+        industry:
+          type: string
+          title: Industry
+          description: Normalized industry label, e.g. `Healthcare / Dental`
+          default: ''
+        linkedin_url:
+          type: string
+          title: Linkedin Url
+          description: Only if the company links it on its own site
+          default: ''
+        twitter_url:
+          type: string
+          title: Twitter Url
+          default: ''
+        facebook_url:
+          type: string
+          title: Facebook Url
+          default: ''
+        instagram_url:
+          type: string
+          title: Instagram Url
+          default: ''
+        source:
+          type: string
+          title: Source
+          description: 'Discovery source: osm | google_places | seed'
+          default: ''
+        source_url:
+          type: string
+          title: Source Url
+          description: Page where the email/contact data was found (GDPR provenance)
+          default: ''
+        external_id:
+          type: string
+          title: External Id
+          description: Source reference, e.g. `node/123` (OSM) or a Google place id
+          default: ''
+        search_keyword:
+          type: string
+          title: Search Keyword
+          default: ''
+        search_location:
+          type: string
+          title: Search Location
+          default: ''
+        lawful_basis:
+          type: string
+          title: Lawful Basis
+          description: GDPR lawful basis recorded at collection
+          default: ''
+        tags:
+          type: string
+          title: Tags
+          description: Comma separated
+          default: ''
+        owner:
+          type: string
+          title: Owner
+          default: ''
+        notes:
+          type: string
+          title: Notes
+          default: ''
+        last_contacted_at:
+          type: string
+          title: Last Contacted At
+          description: ISO 8601 timestamp
+          default: ''
+        next_follow_up_at:
+          type: string
+          title: Next Follow Up At
+          description: ISO 8601 date or timestamp
+          default: ''
+        campaign:
+          type: string
+          title: Campaign
+          default: ''
+        sequence_step:
+          type: string
+          title: Sequence Step
+          default: ''
+        run_id:
+          type: string
+          title: Run Id
+          description: Run that created the lead
+          default: ''
+        created_at:
+          type: string
+          title: Created At
+          description: ISO 8601 UTC
+          default: ''
+        updated_at:
+          type: string
+          title: Updated At
+          description: ISO 8601 UTC
+          default: ''
+      type: object
+      title: Lead
+      description: One row per company. Field order == Google Sheet column order for new sheets.
+    LeadPage:
+      properties:
+        total:
+          type: integer
+          title: Total
+          description: Number of leads matching the filters
+        limit:
+          type: integer
+          title: Limit
+        offset:
+          type: integer
+          title: Offset
+        items:
+          items:
+            $ref: '#/components/schemas/Lead'
+          type: array
+          title: Items
+      type: object
+      required:
+      - total
+      - limit
+      - offset
+      - items
+      title: LeadPage
+    LeadStatus:
+      type: string
+      enum:
+      - new
+      - qualified
+      - contacted
+      - replied
+      - meeting
+      - won
+      - lost
+      - bounced
+      - unsubscribed
+      - do_not_contact
+      title: LeadStatus
+    LeadUpdate:
+      properties:
+        status:
+          anyOf:
+          - $ref: '#/components/schemas/LeadStatus'
+          - type: 'null'
+          description: New pipeline status. A change is logged to Activities; `contacted` also sets `last_contacted_at`
+            unless you send it.
+        append_note:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Append Note
+          description: Appended to `notes` with today's date
+        notes:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Notes
+          description: Replaces `notes` entirely
+        owner:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Owner
+        tags:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Tags
+          description: Comma separated
+        campaign:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Campaign
+        sequence_step:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Sequence Step
+        last_contacted_at:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Last Contacted At
+          description: ISO 8601
+        next_follow_up_at:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Next Follow Up At
+          description: ISO 8601
+      additionalProperties: false
+      type: object
+      title: LeadUpdate
+      description: |-
+        Fields a CRM or email tool may change. Fields you leave out are not touched; `null` or `""`
+        clears a field. Data found by the crawler (company, email, phone …) is read-only here.
+      examples:
+      - append_note: intro email sent
+        campaign: q1-dental
+        sequence_step: '1'
+        status: contacted
+    RunRecord:
+      properties:
+        run_id:
+          type: string
+          title: Run Id
+        started_at:
+          type: string
+          title: Started At
+        finished_at:
+          type: string
+          title: Finished At
+          default: ''
+        search:
+          type: string
+          title: Search
+          default: ''
+        sources:
+          type: string
+          title: Sources
+          description: Comma separated
+          default: ''
+        discovered:
+          type: integer
+          title: Discovered
+          default: 0
+        crawled:
+          type: integer
+          title: Crawled
+          default: 0
+        new:
+          type: integer
+          title: New
+          description: Leads added
+          default: 0
+        duplicates:
+          type: integer
+          title: Duplicates
+          default: 0
+        merged:
+          type: integer
+          title: Merged
+          description: Existing leads whose blank fields were filled
+          default: 0
+        suppressed:
+          type: integer
+          title: Suppressed
+          default: 0
+        skipped:
+          type: integer
+          title: Skipped
+          default: 0
+        errors:
+          type: integer
+          title: Errors
+          default: 0
+        notes:
+          type: string
+          title: Notes
+          description: Error notes
+          default: ''
+      type: object
+      required:
+      - run_id
+      - started_at
+      title: RunRecord
+      description: A finished run, as logged in the Runs tab / table.
+    RunRequest:
+      properties:
+        search:
+          type: string
+          title: Search
+          description: Name of a search in config.yaml (see `GET /searches`)
+        sources:
+          anyOf:
+          - items:
+              type: string
+              enum:
+              - osm
+              - google_places
+            type: array
+          - type: 'null'
+          title: Sources
+          description: Override the search's sources
+        limit:
+          anyOf:
+          - type: integer
+            minimum: 1.0
+          - type: 'null'
+          title: Limit
+          description: Stop after processing this many new businesses
+        dry_run:
+          type: boolean
+          title: Dry Run
+          description: Collect leads without saving them; they are returned in the job
+          default: false
+        force:
+          type: boolean
+          title: Force
+          description: Re-crawl websites even if crawled within `recrawl_after_days`
+          default: false
+      additionalProperties: false
+      type: object
+      required:
+      - search
+      title: RunRequest
+      examples:
+      - dry_run: true
+        limit: 10
+        search: dental-uk
+    SearchInfo:
+      properties:
+        name:
+          type: string
+          title: Name
+        keywords:
+          items:
+            type: string
+          type: array
+          minItems: 1
+          title: Keywords
+        locations:
+          items:
+            type: string
+          type: array
+          minItems: 1
+          title: Locations
+        sources:
+          items:
+            type: string
+          type: array
+          title: Sources
+        industry:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Industry
+        osm_tags:
+          items:
+            type: string
+          type: array
+          title: Osm Tags
+        max_results:
+          type: integer
+          maximum: 1000.0
+          minimum: 1.0
+          title: Max Results
+          default: 100
+        tags:
+          items:
+            type: string
+          type: array
+          title: Tags
+        schedules:
+          items:
+            type: string
+          type: array
+          title: Schedules
+          description: Cron expressions (config timezone)
+        next_run:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Next Run
+          description: Next scheduled start (ISO 8601). Only fires while `leads scheduler start` runs.
+      type: object
+      required:
+      - name
+      - keywords
+      - locations
+      title: SearchInfo
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+          title: Location
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+        input:
+          title: Input
+        ctx:
+          type: object
+          title: Context
+      type: object
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError
+  securitySchemes:
+    APIKeyHeader:
+      type: apiKey
+      description: Required when LEADGEN_API_KEY is set on the server
+      in: header
+      name: X-API-Key
+tags:
+- name: leads
+  description: Query and update leads (one row per company).
+- name: activities
+  description: 'CRM events per lead: emails sent, replies, calls, status changes.'
+- name: runs
+  description: Start configured searches and check their progress and history.
+- name: export
+  description: Download contactable leads for an email tool.
+- name: privacy
+  description: GDPR erasure (Art. 17) with permanent suppression.
+- name: system
+  description: Health check.

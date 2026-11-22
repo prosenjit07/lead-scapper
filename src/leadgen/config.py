@@ -134,6 +134,8 @@ class Secrets(BaseSettings):
     google_service_account_file: Path | None = None
     google_sheet_id: str | None = None
     google_places_api_key: str | None = None
+    # REST API (`leads api`): when set, every endpoint except /health requires the X-API-Key header.
+    leadgen_api_key: str | None = None
 
 
 def resolve_config_path(path: str | Path | None) -> Path:

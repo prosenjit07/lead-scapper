@@ -27,6 +27,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dashboard = ["streamlit>=1.35", "pandas>=2.2"]
+api = ["fastapi>=0.115", "uvicorn>=0.30"]
 browser = ["playwright>=1.44"]
 
 [dependency-groups]

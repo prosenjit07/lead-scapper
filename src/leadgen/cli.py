@@ -10,7 +10,7 @@ import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from importlib import resources
 from pathlib import Path
 from typing import Annotated, Any, TypeVar
@@ -31,7 +31,7 @@ from leadgen.config import (
     resolve_config_path,
 )
 from leadgen.logging_setup import setup_logging
-from leadgen.models import LEAD_COLUMNS, Lead, LeadStatus, utcnow_iso
+from leadgen.models import LEAD_COLUMNS, Lead, LeadStatus
 from leadgen.pipeline import RunResult
 from leadgen.store import open_store
 from leadgen.store.base import LeadStore
@@ -460,7 +460,7 @@ def status(
     note: Annotated[str | None, typer.Option(help="Append a note")] = None,
 ) -> None:
     """Change a lead's pipeline status (logged to Activities)."""
-    from leadgen.views import find_lead
+    from leadgen.views import find_lead, status_change
 
     c: Ctx = ctx.obj
     if new_status not in {s.value for s in LeadStatus}:
@@ -469,15 +469,9 @@ def status(
     if not lead:
         err.print(f"[red]No lead matches[/red] {identifier}")
         raise typer.Exit(1)
-    fields = {"status": new_status}
-    if new_status == LeadStatus.CONTACTED:
-        fields["last_contacted_at"] = utcnow_iso()
-    if note:
-        fields["notes"] = (lead.notes + "\n" if lead.notes else "") + f"[{datetime.now(UTC):%Y-%m-%d}] {note}"
+    fields, details = status_change(lead, new_status, note)
     c.store.update_leads({lead.lead_id: fields})
-    c.store.add_activity(
-        lead.lead_id, "status_change", f"{lead.status} -> {new_status}" + (f": {note}" if note else "")
-    )
+    c.store.add_activity(lead.lead_id, "status_change", details)
     console.print(f"[green]{lead.company_name}[/green]: {lead.status} → {new_status}")
 
 
@@ -619,6 +613,38 @@ def dashboard(
     if c.store_kind:
         cmd += ["--store", c.store_kind]
     raise typer.Exit(subprocess.call(cmd))
+
+
+@app.command()
+@handle_errors
+def api(
+    ctx: typer.Context,
+    host: Annotated[str, typer.Option(help="Interface to listen on. Anything but localhost needs LEADGEN_API_KEY")] = "127.0.0.1",
+    port: Annotated[int, typer.Option(help="Port")] = 8000,
+    openapi: Annotated[Path | None, typer.Option("--openapi", help="Write the OpenAPI (Swagger) schema to this file and exit: .yaml/.yml for YAML, otherwise JSON")] = None,
+) -> None:  # fmt: skip
+    """Start the REST API: Swagger UI at /docs (needs: uv sync --extra api)."""
+    c: Ctx = ctx.obj
+    try:
+        import uvicorn
+
+        from leadgen.api import create_app, is_loopback, openapi_text
+    except ImportError as e:
+        raise ConfigError("the API needs the extra: uv sync --extra api") from e
+    application = create_app(c.cfg, c.secrets, c.store_kind)
+    if openapi:
+        fmt = "yaml" if openapi.suffix.lower() in (".yaml", ".yml") else "json"
+        openapi.parent.mkdir(parents=True, exist_ok=True)
+        openapi.write_text(openapi_text(application, fmt), encoding="utf-8")
+        console.print(f"[green]wrote[/green] {openapi}")
+        return
+    if not is_loopback(host) and not c.secrets.leadgen_api_key:
+        raise ConfigError(
+            f"--host {host} would expose lead data to the network; set LEADGEN_API_KEY in .env first"
+        )
+    console.print(f"Swagger UI: [bold]http://{'localhost' if is_loopback(host) else host}:{port}/docs[/bold]"
+                  + ("" if c.secrets.leadgen_api_key else "  (no LEADGEN_API_KEY set: localhost only)"))  # fmt: skip
+    uvicorn.run(application, host=host, port=port, log_level="info")
 
 
 if __name__ == "__main__":  # pragma: no cover

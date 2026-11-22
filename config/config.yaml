@@ -51,14 +51,51 @@ searches:
     max_results: 100                    # per keyword x location x source
     tags: [q1-campaign]
 
-  - name: agencies-berlin
+  - name: agencies-bangladesh
     keywords: ["marketing agency", "web design"]
-    locations: ["Berlin, Germany"]
+    locations: ["Bangladesh"]
     sources: [osm]
     max_results: 50
+
+  # Developed ("first-world") countries. Cities, not whole countries: max_results applies per location,
+  # and country-wide queries are slow on the public Overpass server.
+  # One keyword is enough for OSM: "web design" maps to the same OSM tags as "marketing agency"
+  # (office=advertising_agency, office=marketing), so it would only repeat each query.
+  - name: agencies-developed
+    keywords: ["marketing agency"]
+    locations:
+      # North America
+      - "New York City, USA"
+      - "Los Angeles, USA"
+      - "Chicago, USA"
+      - "San Francisco, USA"
+      - "Toronto, Canada"
+      - "Vancouver, Canada"
+      # UK & Ireland
+      - "London, UK"
+      - "Manchester, UK"
+      - "Dublin, Ireland"
+      # Australia, New Zealand, Singapore
+      - "Sydney, Australia"
+      - "Melbourne, Australia"
+      - "Auckland, New Zealand"
+      - "Singapore"
+      # Western & Northern Europe
+      - "Berlin, Germany"
+      - "Munich, Germany"
+      - "Paris, France"
+      - "Amsterdam, Netherlands"
+      - "Zurich, Switzerland"
+      - "Stockholm, Sweden"
+      - "Copenhagen, Denmark"
+      - "Oslo, Norway"
+    sources: [osm]
+    industry: "Marketing & Advertising"
+    max_results: 50                    # per city: up to ~1,000 agencies per full run
+    tags: [developed-markets]
 
 schedules:
   - search: dental-uk
     cron: "0 6 * * MON"      # every Monday 06:00 (timezone above)
-  - search: agencies-berlin
+  - search: agencies-bangladesh
     cron: "30 6 1 * *"       # 1st of every month 06:30

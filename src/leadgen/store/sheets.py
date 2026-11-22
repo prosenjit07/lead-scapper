@@ -273,6 +273,11 @@ class SheetsStore:
         self._append(ACTIVITIES, [{"lead_id": lead_id, "timestamp": utcnow_iso(), "type": type_,
                                    "details": details, "campaign": campaign}])  # fmt: skip
 
+    def list_activities(self, lead_id: str | None = None) -> list[dict[str, str]]:
+        rows = self._rows_as_dicts(ACTIVITIES)
+        rows = [r for r in rows if not lead_id or r.get("lead_id") == lead_id]
+        return sorted(rows, key=lambda r: r.get("timestamp", ""))
+
     def delete_activities(self, lead_ids: list[str]) -> int:
         rows = self._row_numbers(ACTIVITIES, "lead_id")
         targets = [r for i in lead_ids for r in rows.get(i, [])]
