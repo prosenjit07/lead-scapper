@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime, timedelta
 
 import yaml
@@ -106,6 +107,13 @@ def test_cli_misc(tmp_path):
     assert r.exit_code != 0  # needs a search, --all, or --keyword/--location
     r = runner.invoke(app, [*base, "run", "nope"])
     assert r.exit_code == 2 and "no search named" in r.output
+    r = runner.invoke(app, [*base, "run", "s2"])  # typo of an existing search name
+    assert r.exit_code == 2 and "Did you mean: s1?" in r.output and "leads run -k" in r.output
+    r = runner.invoke(app, [*base, "s1", "--dry-run"])  # forgot `run`
+    flat = re.sub(r"[│╭╮╰╯─\s]+", " ", r.output)  # the error is boxed and wrapped at 80 columns
+    assert r.exit_code != 0 and "leads run s1 --dry-run" in flat, r.output
+    r = runner.invoke(app, [*base, "lst"])  # a real command typo keeps Click's suggestion
+    assert r.exit_code != 0 and "Did you mean 'list'?" in r.output
 
 
 def test_cli_missing_config(tmp_path):

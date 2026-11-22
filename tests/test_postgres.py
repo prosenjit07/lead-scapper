@@ -67,6 +67,23 @@ def test_activity_for_unknown_lead_is_refused(pg_store):
         pg_store.add_activity("ld_missing", "email_sent")
 
 
+def test_connection_closed_by_the_server_is_replaced(pg_dsn):
+    """Hosted databases close idle connections (Neon pauses after 5 idle minutes). A long-running
+    dashboard/API must not hand out the dead pooled connection ("SSL connection has been closed")."""
+    store = PostgresStore.connect(pg_dsn, max_size=2, application_name="leadgen-test-reconnect")
+    try:
+        store.add_leads([lead("ld_a")])
+        with psycopg.connect(TEST_DATABASE_URL, autocommit=True) as admin:
+            killed = admin.execute(
+                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = %s",
+                ("leadgen-test-reconnect",),
+            ).fetchall()
+        assert killed, "the pool should have had an open connection to kill"
+        assert [x.lead_id for x in store.load_leads()] == ["ld_a"]  # reconnects instead of failing
+    finally:
+        store.close()
+
+
 # ---------------------------------------------------------------------------- schema / connection
 def test_unmigrated_database_asks_for_migrate():
     if not TEST_DATABASE_URL:

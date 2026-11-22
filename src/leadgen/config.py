@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 import os
 from pathlib import Path
 from typing import Literal
@@ -134,7 +135,14 @@ class AppConfig(BaseModel):
         for s in self.searches:
             if s.name == name:
                 return s
-        raise ConfigError(f"no search named '{name}' in config (have: {[s.name for s in self.searches]})")
+        names = [s.name for s in self.searches]
+        close = difflib.get_close_matches(name, names, n=3, cutoff=0.5)
+        hint = f" Did you mean: {', '.join(close)}?" if close else ""
+        raise ConfigError(
+            f"no search named '{name}' in config.{hint}\n"
+            f"Searches: {', '.join(names) or '(none)'}\n"
+            'Or search anything without editing the config: leads run -k "dentist" -l "Chicago, USA"'
+        )
 
 
 class Secrets(BaseSettings):

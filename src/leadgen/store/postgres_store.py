@@ -96,7 +96,14 @@ INSERT_LEAD = sql.SQL("INSERT INTO leads ({cols}) VALUES ({vals}) ON CONFLICT DO
 class PostgresStore:
     name = "postgres"
 
-    def __init__(self, dsn: str, *, max_size: int = 5, connect_timeout: float = 10.0) -> None:
+    def __init__(
+        self,
+        dsn: str,
+        *,
+        max_size: int = 5,
+        connect_timeout: float = 10.0,
+        application_name: str = "leadgen",  # shows in pg_stat_activity / the Neon console
+    ) -> None:
         self.dsn = dsn
         try:  # one direct attempt first: gives libpq's real reason (wrong password, no such database …)
             psycopg.connect(dsn, connect_timeout=int(connect_timeout)).close()
@@ -106,8 +113,12 @@ class PostgresStore:
             dsn,
             min_size=1,
             max_size=max_size,
-            kwargs={"row_factory": dict_row},
+            kwargs={"row_factory": dict_row, "application_name": application_name},
             configure=_configure,
+            # Hosted databases close idle connections (Neon pauses after 5 idle minutes; laptops sleep).
+            # Check each connection when it's handed out and replace dead ones, so a long-running
+            # dashboard/API doesn't fail with "SSL connection has been closed unexpectedly".
+            check=ConnectionPool.check_connection,
             open=False,
             name="leadgen",
         )

@@ -19,6 +19,7 @@ import httpx
 import typer
 from rich.console import Console
 from rich.table import Table
+from typer.core import TyperGroup
 
 from leadgen.config import (
     KNOWN_SOURCES,
@@ -37,7 +38,29 @@ from leadgen.pipeline import RunResult
 from leadgen.store import open_store
 from leadgen.store.base import LeadStore
 
+
+class _LeadsGroup(TyperGroup):
+    """`leads architects-developed` (a search name typed as a command) → point to `leads run …`."""
+
+    def resolve_command(self, ctx: Any, args: list[str]) -> Any:
+        try:
+            return super().resolve_command(ctx, args)
+        except Exception as e:
+            # Typer bundles its own copy of Click, so match the error by name and re-raise via ctx.fail
+            # (which uses the right class) instead of importing Typer internals.
+            name = args[0] if args else ""
+            if type(e).__name__ != "UsageError" or not name or name.startswith("-"):
+                raise
+            if "Did you mean" in str(getattr(e, "message", "")):
+                raise  # a real command typo, e.g. `leads lst` → "Did you mean 'list'?"
+            ctx.fail(
+                f"No such command '{name}'. To run a search, put `run` first: "
+                + f"leads run {name} {' '.join(args[1:])}".rstrip()
+            )
+
+
 app = typer.Typer(
+    cls=_LeadsGroup,
     help="Compliant B2B lead generation: discover businesses, crawl their public pages, validate and store leads.",
     no_args_is_help=True,
     rich_markup_mode="rich",
@@ -750,6 +773,23 @@ def db_import(
         console.print(f"[yellow]note:[/yellow] {note}")
 
 
+def _require_free_port(port: int, what: str, url: str) -> None:
+    """Fail with a helpful message instead of Streamlit's/uvicorn's bare 'port not available' error."""
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.5)
+        in_use = s.connect_ex(("127.0.0.1", port)) == 0
+    if in_use:
+        err.print(
+            f"[red]Port {port} is already in use[/red], probably by a {what} that is already running.\n"
+            f"  • Already running? Just open [bold]{url}[/bold]\n"
+            f"  • Start another one on a different port: [bold]--port {port + 1}[/bold]\n"
+            f"  • See what is using it: [bold]lsof -i :{port}[/bold] (stop it with Ctrl+C in its terminal)"
+        )
+        raise typer.Exit(1)
+
+
 @app.command()
 @handle_errors
 def dashboard(
@@ -762,6 +802,7 @@ def dashboard(
         import streamlit  # noqa: F401
     except ImportError as e:
         raise ConfigError(f"the dashboard needs: {install_hint('dashboard')}") from e
+    _require_free_port(port, "dashboard", f"http://localhost:{port}")
     app_path = Path(__file__).parent / "dashboard" / "app.py"
     cmd = [sys.executable, "-m", "streamlit", "run", str(app_path), "--server.port", str(port),
            "--server.address", "localhost", "--browser.gatherUsageStats", "false", "--",
@@ -798,6 +839,7 @@ def api(
         raise ConfigError(
             f"--host {host} would expose lead data to the network; set LEADGEN_API_KEY in .env first"
         )
+    _require_free_port(port, "API", f"http://localhost:{port}/docs")
     console.print(f"Swagger UI: [bold]http://{'localhost' if is_loopback(host) else host}:{port}/docs[/bold]"
                   + ("" if c.secrets.leadgen_api_key else "  (no LEADGEN_API_KEY set: localhost only)"))  # fmt: skip
     uvicorn.run(application, host=host, port=port, log_level="info")

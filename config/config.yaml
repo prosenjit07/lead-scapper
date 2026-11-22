@@ -53,12 +53,6 @@ searches:
     max_results: 100                    # per keyword x location x source
     tags: [q1-campaign]
 
-  - name: agencies-bangladesh
-    keywords: ["marketing agency", "web design"]
-    locations: ["Bangladesh"]
-    sources: [osm]
-    max_results: 50
-
   # Developed ("first-world") countries. Cities, not whole countries: max_results applies per location,
   # and country-wide queries are slow on the public Overpass server.
   # One keyword is enough for OSM: "web design" maps to the same OSM tags as "marketing agency"
@@ -96,8 +90,115 @@ searches:
     max_results: 50                    # per city: up to ~1,000 agencies per full run
     tags: [developed-markets]
 
+  # ---------------------------------------------------------------------------------------------
+  # Industry searches in English-speaking developed markets: small businesses that usually need a
+  # website, booking system or software. They all share the 12-city list below: `&english_markets`
+  # names it once, and `*english_markets` reuses it (edit the list here and every search follows).
+  # One keyword per search is enough: each maps to several OSM categories (shown on the right).
+  # A full run of one search: up to 12 × 50 = 600 businesses, roughly 20–40 minutes of polite crawling.
+  - name: dentists-developed
+    keywords: ["dentist"]                 # amenity/healthcare=dentist
+    locations: &english_markets
+      - "New York City, USA"
+      - "Los Angeles, USA"
+      - "Chicago, USA"
+      - "San Francisco, USA"
+      - "Toronto, Canada"
+      - "Vancouver, Canada"
+      - "London, UK"
+      - "Manchester, UK"
+      - "Dublin, Ireland"
+      - "Sydney, Australia"
+      - "Melbourne, Australia"
+      - "Auckland, New Zealand"
+    sources: [osm]
+    industry: "Healthcare / Dental"
+    max_results: 50
+    tags: [developed-markets]
+
+  - name: clinics-developed
+    keywords: ["clinic"]                  # doctors, clinics
+    locations: *english_markets
+    sources: [osm]
+    industry: "Healthcare / Medical Practice"
+    max_results: 50
+    tags: [developed-markets]
+
+  - name: law-firms-developed
+    keywords: ["lawyer"]                  # office=lawyer, office=notary
+    locations: *english_markets
+    sources: [osm]
+    industry: "Legal Services"
+    max_results: 50
+    tags: [developed-markets]
+
+  - name: accountants-developed
+    keywords: ["accountant"]              # office=accountant, office=tax_advisor
+    locations: *english_markets
+    sources: [osm]
+    industry: "Accounting & Tax"
+    max_results: 50
+    tags: [developed-markets]
+
+  - name: real-estate-developed
+    keywords: ["real estate"]             # estate agents, property management
+    locations: *english_markets
+    sources: [osm]
+    industry: "Real Estate"
+    max_results: 50
+    tags: [developed-markets]
+
+  - name: architects-developed
+    keywords: ["architect"]               # architects, engineers, surveyors
+    locations: *english_markets
+    sources: [osm]
+    industry: "Architecture & Engineering"
+    max_results: 50
+    tags: [developed-markets]
+
+  - name: construction-trades-developed
+    keywords: ["plumber"]                 # plumbers, electricians, roofers, builders, HVAC …
+    locations: *english_markets
+    sources: [osm]
+    industry: "Construction & Trades"
+    max_results: 50
+    tags: [developed-markets]
+
+  - name: hotels-developed
+    keywords: ["hotel"]                   # hotels, guest houses, hostels, travel agents
+    locations: *english_markets
+    sources: [osm]
+    industry: "Hospitality & Travel"
+    max_results: 50
+    tags: [developed-markets]
+
+  - name: fitness-developed
+    keywords: ["gym"]                     # fitness centres, sports centres, massage
+    locations: *english_markets
+    sources: [osm]
+    industry: "Fitness & Wellness"
+    max_results: 50
+    tags: [developed-markets]
+
+  - name: beauty-salons-developed
+    keywords: ["hair salon"]              # hairdressers, beauty salons
+    locations: *english_markets
+    sources: [osm]
+    industry: "Beauty & Personal Care"
+    max_results: 50
+    tags: [developed-markets]
+
+  - name: it-companies-developed
+    keywords: ["it company"]              # office=it: potential partners / white-label work
+    locations: *english_markets
+    sources: [osm]
+    industry: "IT & Software"
+    max_results: 50
+    tags: [developed-markets, partners]
+
 schedules:
   - search: dental-uk
     cron: "0 6 * * MON"      # every Monday 06:00 (timezone above)
-  - search: agencies-bangladesh
-    cron: "30 6 1 * *"       # 1st of every month 06:30
+  # Add more the same way, e.g. one industry search per week day:
+  # - search: law-firms-developed
+  #   cron: "0 6 * * TUE"

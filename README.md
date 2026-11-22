@@ -222,6 +222,7 @@ schedules:
 ```
 
 - **Industry taxonomy**: `src/leadgen/data/industries.yaml` maps keywords, OSM tags, Google place types and schema.org types to about 30 normalized industries. Extend it with `industries_file:` (same format).
+- **Reuse a city list** across searches with a YAML anchor: name it once (`locations: &english_markets` followed by the list) and reuse it with `locations: *english_markets`. `config/config.yaml` does this for its industry searches. Restart the dashboard and API after editing the config, so they pick up the change.
 - **OSM tags**: if a keyword has no mapping, the OSM source falls back to a business-name search. Set `osm_tags` for precise results (see the [OSM Map Features](https://wiki.openstreetmap.org/wiki/Map_features) wiki).
 - **Store**: `store: sheets | sqlite | postgres`. PostgreSQL is the choice for production and for several programs writing at once; SQLite for local use and tests; Sheets as a shared spreadsheet.
 - Secrets live only in `.env`: `GOOGLE_SERVICE_ACCOUNT_FILE`, `GOOGLE_SHEET_ID`, `GOOGLE_PLACES_API_KEY`, `LEADGEN_API_KEY`, `DATABASE_URL`.
@@ -576,6 +577,7 @@ lead-scraper/
 | Symptom | Fix |
 |---|---|
 | `Overpass … ReadTimeout` / `The read operation timed out` | The public Overpass server is busy (it happens with big cities). Retry later, or set `osm.overpass_url` to another public instance listed on the [OSM wiki](https://wiki.openstreetmap.org/wiki/Overpass_API#Public_Overpass_API_instances). Other locations in the same run are unaffected. |
+| `Port 8501 (or 8000) is already in use` | A dashboard (or API) is already running: open its URL, stop it with Ctrl+C in its terminal, or start another with `--port 8502`. `lsof -i :8501` shows what holds the port. |
 | `PostgreSQL store needs: uv sync --extra postgres …` | An install removed the extra: run `uv sync --extra dashboard --extra api --extra postgres`. |
 | `Overpass HTTP 406/403 … refused this client` | The public Overpass server filters some clients. Read its [usage policy](https://dev.overpass-api.de/overpass-doc/en/preface/commons.html), make sure `user_agent` names your application with a real contact URL/email, or set `osm.overpass_url` to another instance you may use (e.g. self-hosted). |
 | `Google Places API 403` | Enable *Places API (New)* (not the legacy Places API), enable billing, and check the key restrictions. |
@@ -584,6 +586,7 @@ lead-scraper/
 | Few emails found | Many small businesses only publish a contact form. Try more keywords or Places, or add an enricher. `require_email: true` drops email-less leads. |
 | Summary tab broken after reordering columns | Run `leads sheet init` again. |
 | `PostgreSQL schema is at …, latest is …` | Run `leads db migrate` (after installing or upgrading leadgen). |
+| `SSL connection has been closed unexpectedly` (dashboard or API on Neon) | Neon closes idle connections when it pauses after 5 idle minutes. The store now checks each pooled connection before use and replaces dead ones; if you still see this, restart the dashboard or API so it loads the current code. |
 | `cannot connect to PostgreSQL` | Check `DATABASE_URL` in `.env`, that the server is running (`pg_isready`), and that the database exists (`createdb leadgen`). Hosted databases need `?sslmode=require`; Neon's connection strings include it. |
 
 Logs: the console, plus JSON lines in `logs/leadgen.log` (rotated).

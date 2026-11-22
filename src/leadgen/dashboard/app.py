@@ -198,11 +198,28 @@ def run_panel(cfg: AppConfig, secrets: Secrets, store: LeadStore) -> None:
     from leadgen.runner import run_search
 
     st.subheader("Run a search")
-    configured = [s.name for s in cfg.searches]
+    by_name = {s.name: s for s in cfg.searches}
+    configured = list(by_name)
+    scheduled = {sch.search for sch in cfg.schedules}
+
+    def describe(name: str) -> str:
+        """e.g. 'law-firms-developed · lawyer · 12 locations · osm'."""
+        s = by_name.get(name)
+        if s is None:
+            return name
+        where = s.locations[0] if len(s.locations) == 1 else f"{len(s.locations)} locations"
+        label = f"{name}  ·  {', '.join(s.keywords)}  ·  {where}  ·  {', '.join(s.sources)}"
+        return label + ("  ·  scheduled" if {name, "all"} & scheduled else "")
+
     with st.form("run_form"):
         mode = st.radio("Search", ["Configured search", "Ad-hoc"], horizontal=True)
-        c1, c2, c3 = st.columns(3)
-        chosen = c1.selectbox("Configured search", configured or ["(none in config)"])
+        chosen = st.selectbox(
+            f"Configured search ({len(configured)} in config.yaml)",
+            configured or ["(none in config)"],
+            format_func=describe,
+            help="Searches come from config/config.yaml. After editing that file, restart the dashboard.",
+        )
+        c2, c3 = st.columns(2)
         keyword = c2.text_input("Ad-hoc keyword", placeholder="e.g. dentist")
         location = c3.text_input("Ad-hoc location", placeholder="e.g. Bristol, UK")
         c4, c5, c6 = st.columns(3)
