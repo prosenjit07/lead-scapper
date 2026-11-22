@@ -57,10 +57,10 @@ No Google account yet? Add `--store sqlite` to any command (or set `store: sqlit
 
 ### PostgreSQL setup (recommended for production)
 
-1. Get a PostgreSQL 16+ database: a local install (e.g. Homebrew), `docker compose up -d` with the included [docker-compose.yml](docker-compose.yml), or a managed service.
+1. Get a PostgreSQL 16+ database: a managed service such as [Neon](https://neon.com) (this project's choice; free tier), a local install (e.g. Homebrew), or `docker compose up -d` with the included [docker-compose.yml](docker-compose.yml).
 2. `uv sync --extra postgres`, and put the connection string in `.env` as `DATABASE_URL` (e.g. `postgresql://user:password@localhost:5432/leadgen`).
-3. `uv run leads db migrate` creates the tables (run it again after upgrading leadgen).
-4. Set `store: postgres` in `config/config.yaml`. Moving from SQLite or Sheets? `uv run leads db import --from sqlite` (or `--from sheets`, `--dry-run` first) copies leads, activities, opt-outs and run history, and is safe to re-run.
+3. `uv run leads db migrate` creates the tables (run it again after upgrading leadgen). On Neon, keep the **pooled** URL (`-pooler` in the host) in `.env` for the app, and run migrations over the **direct** URL: `DATABASE_URL="<URL without -pooler>" uv run leads db migrate`.
+4. Set `store: postgres` in `config/config.yaml`. Moving existing data? `uv run leads db import --from sqlite` (or `--from sheets`, or `--from postgres` with the source in `SOURCE_DATABASE_URL`, e.g. local → Neon; `--dry-run` first) copies leads, activities, opt-outs and run history, and is safe to re-run.
 
 Why, and what comes next: [docs/postgres-migration-plan.md](docs/postgres-migration-plan.md).
 
@@ -208,7 +208,7 @@ schedules:
 | `leads api [--host H --port P]` / `--openapi FILE` | REST API with Swagger UI at http://localhost:8000/docs / write the OpenAPI schema |
 | `leads db migrate [--sql]` | Create or upgrade the PostgreSQL schema (`--sql` prints it for review) |
 | `leads db status` | PostgreSQL server, schema version and row counts |
-| `leads db import --from sqlite\|sheets [--path FILE] [--dry-run]` | Copy everything into PostgreSQL; checks values first, safe to re-run |
+| `leads db import --from sqlite\|sheets\|postgres [--path FILE] [--dry-run]` | Copy everything into PostgreSQL (`DATABASE_URL`); `--from postgres` reads `SOURCE_DATABASE_URL`. Checks values first, safe to re-run |
 
 Global options: `--config PATH` (or `LEADGEN_CONFIG`), `--store sheets|sqlite|postgres`, `-v` for debug logging.
 
@@ -542,7 +542,7 @@ lead-scraper/
 | Few emails found | Many small businesses only publish a contact form. Try more keywords or Places, or add an enricher. `require_email: true` drops email-less leads. |
 | Summary tab broken after reordering columns | Run `leads sheet init` again. |
 | `PostgreSQL schema is at …, latest is …` | Run `leads db migrate` (after installing or upgrading leadgen). |
-| `cannot connect to PostgreSQL` | Check `DATABASE_URL` in `.env`, that the server is running (`pg_isready`), and that the database exists (`createdb leadgen`). |
+| `cannot connect to PostgreSQL` | Check `DATABASE_URL` in `.env`, that the server is running (`pg_isready`), and that the database exists (`createdb leadgen`). Hosted databases need `?sslmode=require`; Neon's connection strings include it. |
 
 Logs: the console, plus JSON lines in `logs/leadgen.log` (rotated).
 

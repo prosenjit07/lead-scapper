@@ -177,6 +177,41 @@ def test_cli_db_commands_and_postgres_store(tmp_path, monkeypatch, pg_dsn, sqlit
     assert "PostgreSQL" in r.output and "schema 0001" in r.output, r.output
 
 
+def test_cli_import_postgres_to_postgres(tmp_path, monkeypatch, pg_dsn, pg_dsn2, sqlite_source):
+    """e.g. moving from a local PostgreSQL to a hosted one (Neon): SOURCE_DATABASE_URL → DATABASE_URL."""
+    source = PostgresStore.connect(pg_dsn)
+    copy_store(sqlite_source, source)
+    source.add_activity("ld_other", "reply", "interested")
+    monkeypatch.chdir(tmp_path)
+    cfg = {"user_agent": "TestLeadBot/1.0 (+https://test.invalid/bot)", "store": "postgres",
+           "state_path": str(tmp_path / "state.db"), "log_dir": str(tmp_path / "logs")}  # fmt: skip
+    (tmp_path / "config.yaml").write_text(yaml.safe_dump(cfg))
+    base = ["--config", str(tmp_path / "config.yaml"), "db", "import", "--from", "postgres"]
+
+    monkeypatch.setenv("DATABASE_URL", pg_dsn2)
+    r = runner.invoke(app_cli(), base)
+    assert r.exit_code != 0 and "SOURCE_DATABASE_URL" in r.output  # source is required
+    monkeypatch.setenv("SOURCE_DATABASE_URL", pg_dsn2)
+    r = runner.invoke(app_cli(), base)
+    assert r.exit_code != 0 and "same database" in r.output  # never copy a database onto itself
+
+    monkeypatch.setenv("SOURCE_DATABASE_URL", pg_dsn)
+    r = runner.invoke(app_cli(), base)
+    assert r.exit_code == 0, r.output
+    dest = PostgresStore.connect(pg_dsn2)
+    try:
+        assert {x.lead_id: x.to_row() for x in dest.load_leads()} == {
+            x.lead_id: x.to_row() for x in source.load_leads()
+        }
+        assert dest.list_activities(None) == source.list_activities(None)
+        assert dest.list_runs(10) == source.list_runs(10)
+        assert runner.invoke(app_cli(), base).exit_code == 0  # re-run: nothing duplicated
+        assert len(dest.list_activities(None)) == 2
+    finally:
+        dest.close()
+        source.close()
+
+
 def app_cli():
     from leadgen.cli import app
 

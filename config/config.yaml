@@ -4,9 +4,9 @@
 # Sites can then allow/deny you specifically in robots.txt.
 user_agent: "TechnodexLeadBot/1.0 (+https://technodex.vercel.app/; technodexsolutionsltd@gmail.com)"
 
-store: postgres          # sheets | sqlite | postgres  (postgres uses DATABASE_URL from .env)
-                         # Rollback: set `store: sqlite` (data/leads.db is the pre-migration copy; a backup
-                         # from 2026-11-22 is in data/backup/). Leads saved after the switch exist only in PostgreSQL.
+store: postgres          # sheets | sqlite | postgres  (postgres uses DATABASE_URL from .env: Neon, us-east-2)
+                         # Copies as of the 2026-11-22 move to Neon: the local PostgreSQL database `leadgen`,
+                         # data/leads.db (SQLite) and data/backup/. Leads saved after that exist only on Neon.
 sqlite_path: data/leads.db
 state_path: data/state.db
 log_dir: logs

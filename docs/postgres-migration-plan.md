@@ -9,6 +9,7 @@
 | 0. Prerequisites | Done | Both data bugs fixed, with regression tests. The two affected rows were corrected in SQLite before the import (backup in `data/backup/`). `docker-compose.yml` added. Development uses the local Homebrew PostgreSQL 18.3; Docker isn't installed on this machine. Hosting is still open (section 10). |
 | 1. `PostgresStore` | Done | See *Delivered* under Phase 1. 124 tests pass with `TEST_DATABASE_URL`; 95 pass and 29 PostgreSQL tests skip without it. |
 | 2. Move the data | Done | `leads db import --from sqlite`: 10 leads and 3 runs copied; all fields identical when compared lead by lead; no rejected or duplicate rows. `config.yaml` now has `store: postgres`. |
+| Hosting | **Neon** (decided 2026-11-22) | Free tier, PostgreSQL 18.7, AWS us-east-2. Schema created over the direct URL; data copied local → Neon with the new `leads db import --from postgres` (10 leads, 3 runs, identical). The app uses the pooled URL. Re-check the free tier's compute hours before email workers run 24/7 (section 10). |
 | 3. Query methods | Not started | |
 | 4. Crawl state | Not started | Optional; `data/state.db` is still SQLite. |
 | 5. Email automation | Not started | Waits for the email-provider decision. |
@@ -320,7 +321,7 @@ Rules the workers must follow:
 
 **Open decisions:**
 
-1. **Hosting:** local Docker only, a managed service (Supabase, Neon, AWS RDS, …), or your own server?
+1. ~~**Hosting:**~~ **Decided: Neon** (free tier for now). Its 100 compute-hours/month last about 17 days of always-on use at the smallest size, so plan a paid plan, or another host, before 24/7 email workers.
 2. **Google Sheets:** keep it as a one-way export, or drop it once Postgres is live?
 3. **Crawl state:** move it now (Phase 4), or only when a second machine runs scrapes?
 4. **Email provider** (decides the webhook and event design in Phase 5): Amazon SES, Postmark, SendGrid, Mailgun, Gmail/Google Workspace API, …?

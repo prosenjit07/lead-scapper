@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -15,9 +16,9 @@ FIXTURES = Path(__file__).parent / "fixtures"
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "")
 
 
-@pytest.fixture
-def pg_dsn():
-    """A fresh, migrated schema per test (dropped afterwards); skipped without TEST_DATABASE_URL."""
+@contextmanager
+def _migrated_schema():
+    """A fresh, migrated schema (dropped afterwards); skips the test without TEST_DATABASE_URL."""
     if not TEST_DATABASE_URL:
         pytest.skip("set TEST_DATABASE_URL to run the PostgreSQL tests")
     psycopg = pytest.importorskip("psycopg")
@@ -34,6 +35,20 @@ def pg_dsn():
     finally:
         with psycopg.connect(TEST_DATABASE_URL, autocommit=True) as conn:
             conn.execute(f'DROP SCHEMA "{schema}" CASCADE')
+
+
+@pytest.fixture
+def pg_dsn():
+    """A fresh, migrated schema per test (dropped afterwards); skipped without TEST_DATABASE_URL."""
+    with _migrated_schema() as dsn:
+        yield dsn
+
+
+@pytest.fixture
+def pg_dsn2():
+    """A second, independent schema, e.g. as the destination of a PostgreSQL → PostgreSQL copy."""
+    with _migrated_schema() as dsn:
+        yield dsn
 
 
 @pytest.fixture

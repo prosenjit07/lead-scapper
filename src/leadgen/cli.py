@@ -683,10 +683,13 @@ def db_status(ctx: typer.Context) -> None:
 @handle_errors
 def db_import(
     ctx: typer.Context,
-    source: Annotated[str, typer.Option("--from", help="Where to copy from: sqlite | sheets")] = "sqlite",
+    source: Annotated[str, typer.Option("--from", help="Where to copy from: sqlite | sheets | postgres")] = "sqlite",
     path: Annotated[Path | None, typer.Option(help="SQLite file [default: sqlite_path from config]")] = None,
+    source_url: Annotated[str | None, typer.Option("--source-url", envvar="SOURCE_DATABASE_URL",
+        help="--from postgres: the database to copy FROM (prefer the SOURCE_DATABASE_URL env var, so a password "
+             "doesn't end up in your shell history). The destination is always DATABASE_URL.")] = None,
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Check and count only; write nothing")] = False,
-) -> None:
+) -> None:  # fmt: skip
     """Copy leads, activities, suppression list and run history into PostgreSQL (safe to re-run)."""
     from leadgen.store.postgres_store import PostgresStore
     from leadgen.store.transfer import copy_store
@@ -702,14 +705,28 @@ def db_import(
         src: LeadStore = SQLiteStore(sqlite_path)
     elif source == "sheets":
         src = open_store(c.cfg, c.secrets, "sheets")
+    elif source == "postgres":  # e.g. local PostgreSQL → a hosted one (Neon, Supabase, …)
+        if not source_url:
+            raise ConfigError(
+                "--from postgres needs the source database: set SOURCE_DATABASE_URL (or --source-url)"
+            )
+        if source_url == url:
+            raise ConfigError(
+                "the source and destination are the same database (SOURCE_DATABASE_URL = DATABASE_URL)"
+            )
+        src = PostgresStore.connect(source_url)
     else:
-        raise typer.BadParameter("--from must be sqlite or sheets")
+        raise typer.BadParameter("--from must be sqlite, sheets or postgres")
 
-    dst = PostgresStore.connect(url)
     try:
-        report = copy_store(src, dst, dry_run=dry_run)
+        dst = PostgresStore.connect(url)
+        try:
+            report = copy_store(src, dst, dry_run=dry_run)
+        finally:
+            dst.close()
     finally:
-        dst.close()
+        if hasattr(src, "close"):
+            src.close()
     if report.problems:
         err.print(f"[red]Nothing was imported.[/red] {len(report.problems)} value(s) PostgreSQL would reject; "
                   "fix them in the source first:")  # fmt: skip
