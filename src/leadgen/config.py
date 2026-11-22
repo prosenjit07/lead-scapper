@@ -18,6 +18,15 @@ class ConfigError(Exception):
     """Raised when configuration is missing or invalid."""
 
 
+def install_hint(extra: str) -> str:
+    """How to install an optional extra. `uv sync` uninstalls every extra you don't name, so a bare
+    `uv sync --extra X` would silently remove the dashboard/API/PostgreSQL packages you already use."""
+    return (
+        f"uv sync --extra {extra}, together with the other extras you use, e.g. "
+        "uv sync --extra dashboard --extra api --extra postgres (uv sync removes extras you leave out)"
+    )
+
+
 class CrawlConfig(BaseModel):
     max_pages_per_site: int = Field(6, ge=1, le=25)
     per_domain_delay_s: float = Field(2.0, ge=0)

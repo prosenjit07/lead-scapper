@@ -26,6 +26,7 @@ from leadgen.config import (
     ConfigError,
     SearchConfig,
     Secrets,
+    install_hint,
     load_config,
     load_secrets,
     resolve_config_path,
@@ -44,7 +45,7 @@ app = typer.Typer(
 sheet_app = typer.Typer(help="Google Sheet setup.", no_args_is_help=True)
 scheduler_app = typer.Typer(help="Scheduled runs.", no_args_is_help=True)
 db_app = typer.Typer(
-    help="PostgreSQL schema and data import (needs: uv sync --extra postgres).", no_args_is_help=True
+    help="PostgreSQL schema and data import (needs the `postgres` extra).", no_args_is_help=True
 )
 app.add_typer(sheet_app, name="sheet")
 app.add_typer(scheduler_app, name="scheduler")
@@ -136,8 +137,14 @@ def init(
     console.print(
         "\nNext steps:\n"
         "  1. Edit [bold]config/config.yaml[/bold]: set user_agent to your bot name + contact, define searches\n"
-        "  2. Fill in [bold].env[/bold]: GOOGLE_SHEET_ID, GOOGLE_SERVICE_ACCOUNT_FILE, GOOGLE_PLACES_API_KEY (optional)\n"
-        "  3. [bold]leads doctor[/bold] → [bold]leads sheet init[/bold] → [bold]leads run <search> --dry-run[/bold]"
+        "  2. Choose a store in config.yaml and fill in [bold].env[/bold]:\n"
+        "       postgres: DATABASE_URL, then [bold]leads db migrate[/bold]\n"
+        "       sheets:   GOOGLE_SHEET_ID + GOOGLE_SERVICE_ACCOUNT_FILE, then [bold]leads sheet init[/bold]\n"
+        "       sqlite:   nothing to set\n"
+        "     GOOGLE_PLACES_API_KEY is optional for any store.\n"
+        "  3. [bold]leads doctor[/bold] → [bold]leads run <search> --dry-run[/bold]\n"
+        "Install the extras you use in ONE command (uv sync removes the ones you leave out):\n"
+        "  uv sync --extra dashboard --extra api --extra postgres"
     )
 
 
@@ -262,7 +269,7 @@ def doctor(ctx: typer.Context) -> None:
             add(
                 "playwright",
                 False,
-                "render_js is on: uv sync --extra browser && uv run playwright install chromium",
+                f"render_js is on: {install_hint('browser')}, then: uv run playwright install chromium",
             )
     _print_checks(rows)
 
@@ -621,7 +628,7 @@ def _database_url(c: Ctx) -> str:
         import alembic  # noqa: F401
         import psycopg  # noqa: F401
     except ImportError as e:
-        raise ConfigError("PostgreSQL support needs the extra: uv sync --extra postgres") from e
+        raise ConfigError(f"PostgreSQL support needs: {install_hint('postgres')}") from e
     return c.secrets.database_url
 
 
@@ -749,12 +756,12 @@ def dashboard(
     ctx: typer.Context,
     port: Annotated[int, typer.Option(help="Port for the local dashboard")] = 8501,
 ) -> None:
-    """Open the Streamlit dashboard (needs: uv sync --extra dashboard)."""
+    """Open the Streamlit dashboard (needs the `dashboard` extra)."""
     c: Ctx = ctx.obj
     try:
         import streamlit  # noqa: F401
     except ImportError as e:
-        raise ConfigError("dashboard needs the extra: uv sync --extra dashboard") from e
+        raise ConfigError(f"the dashboard needs: {install_hint('dashboard')}") from e
     app_path = Path(__file__).parent / "dashboard" / "app.py"
     cmd = [sys.executable, "-m", "streamlit", "run", str(app_path), "--server.port", str(port),
            "--server.address", "localhost", "--browser.gatherUsageStats", "false", "--",
@@ -772,14 +779,14 @@ def api(
     port: Annotated[int, typer.Option(help="Port")] = 8000,
     openapi: Annotated[Path | None, typer.Option("--openapi", help="Write the OpenAPI (Swagger) schema to this file and exit: .yaml/.yml for YAML, otherwise JSON")] = None,
 ) -> None:  # fmt: skip
-    """Start the REST API: Swagger UI at /docs (needs: uv sync --extra api)."""
+    """Start the REST API: Swagger UI at /docs (needs the `api` extra)."""
     c: Ctx = ctx.obj
     try:
         import uvicorn
 
         from leadgen.api import create_app, is_loopback, openapi_text
     except ImportError as e:
-        raise ConfigError("the API needs the extra: uv sync --extra api") from e
+        raise ConfigError(f"the API needs: {install_hint('api')}") from e
     application = create_app(c.cfg, c.secrets, c.store_kind)
     if openapi:
         fmt = "yaml" if openapi.suffix.lower() in (".yaml", ".yml") else "json"

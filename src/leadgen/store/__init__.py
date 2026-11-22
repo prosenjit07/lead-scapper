@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from leadgen.config import AppConfig, ConfigError, Secrets
+from leadgen.config import AppConfig, ConfigError, Secrets, install_hint
 from leadgen.store.base import LeadStore
 
 STORE_KINDS = ("sheets", "sqlite", "postgres")
@@ -33,7 +33,7 @@ def open_store(cfg: AppConfig, secrets: Secrets, kind: str | None = None) -> Lea
         try:
             from leadgen.store.postgres_store import PostgresStore
         except ImportError as e:
-            raise ConfigError("PostgreSQL store needs the extra: uv sync --extra postgres") from e
+            raise ConfigError(f"PostgreSQL store needs: {install_hint('postgres')}") from e
         return PostgresStore.connect(secrets.database_url)
     raise ConfigError(f"unknown store '{kind}' (expected one of: {', '.join(STORE_KINDS)})")
 

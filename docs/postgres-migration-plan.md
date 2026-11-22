@@ -306,7 +306,7 @@ Rules the workers must follow:
 4. ✅ Back up `data/leads.db` and `data/state.db` (copy the files) → `data/backup/`.
 5. ✅ `leads db import --from sqlite`, then check the counts and spot-checks.
 6. ✅ Set `store: postgres` in `config/config.yaml`; restart the API and dashboard; start the scheduler again.
-7. ⏳ Run a small real search and confirm new leads appear in Postgres.
+7. ✅ Run a small real search and confirm new leads appear in Postgres. *2026-11-22, on Neon: `dental-uk` found 20 Bristol businesses, all already known (19 duplicates, 1 skipped); one merge filled Bupa Dental Care's blank phone, and the run was logged. So writes over the pooled connection work. Leeds failed again: the public Overpass server timed out.*
 8. ⏳ Keep the SQLite backup until the first full week runs cleanly.
 
 ## 10. Risks and open decisions

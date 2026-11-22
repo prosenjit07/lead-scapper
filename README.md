@@ -1,4 +1,4 @@
-# leadgen: compliant B2B lead discovery to Google Sheets
+# leadgen: compliant B2B lead discovery into PostgreSQL or Google Sheets
 
 `leadgen` finds businesses that match your keywords and locations, then reads the **public contact pages on each business's own website**. It extracts the company name, email, contact person, phone, address, industry and social profiles, validates the emails, removes duplicates, and stores one row per company in **Google Sheets**, **PostgreSQL** or a local SQLite file. The sheet is structured so a cold-email or CRM workflow can plug in later.
 
@@ -37,28 +37,68 @@ This is engineering support for compliance, **not legal advice**. You are still 
 
 ---
 
-## Quick start
+## Quick start: run the project
 
-Requires [uv](https://docs.astral.sh/uv/) (Python 3.11+; tested on 3.13).
+Requires [uv](https://docs.astral.sh/uv/) (Python 3.11+; tested on 3.13). Run every command from the project folder (`cd ~/lead-scraper`).
+
+### 1. Install (once, and after every update)
 
 ```bash
-cd ~/lead-scraper
-uv sync --extra dashboard          # add --extra browser for optional JS rendering
-uv run leads init                  # creates config/config.yaml, .env, data/, logs/, secrets/, exports/
-# edit config/config.yaml: set user_agent to YOUR bot name + contact URL/email; define searches
-# edit .env: Google credentials (see below)
-uv run leads doctor                # checks config, credentials, APIs, DNS
-uv run leads sheet init            # creates tabs, headers, status dropdowns, Summary formulas
-uv run leads run dental-uk --dry-run --limit 10    # preview without saving
-uv run leads run dental-uk                          # for real
+uv sync --extra dashboard --extra api --extra postgres
 ```
 
-No Google account yet? Add `--store sqlite` to any command (or set `store: sqlite`) to use a local database. For production, and before any email automation, use PostgreSQL (below).
+> **Always name all three extras.** `uv sync` *removes* every extra you leave out, so `uv sync --extra dashboard` alone uninstalls the PostgreSQL and API packages, and every `leads` command then fails with "needs the postgres extra". Add `--extra browser` only if you enable JavaScript rendering.
+
+### 2. Set up (first time only)
+
+```bash
+uv run leads init        # creates config/config.yaml, .env and the data/ logs/ secrets/ exports/ folders
+                         # (existing files are never overwritten)
+```
+
+1. In **`config/config.yaml`**: set `user_agent` to your bot name and a real contact, set `store: postgres`, and define your `searches`.
+2. In **`.env`**: set `DATABASE_URL` (see [PostgreSQL setup](#postgresql-setup-recommended-for-production)).
+3. Create the database tables, then check the setup:
+
+```bash
+uv run leads db migrate  # create/upgrade the tables (on Neon: see "direct URL" in PostgreSQL setup)
+uv run leads doctor      # `config`, `user agent` and `postgres` must say ok
+```
+
+Not using PostgreSQL? Set `store: sqlite` (a local file, nothing to configure), or `store: sheets` and follow [Google Sheets setup](#google-sheets-setup-free), then run `uv run leads sheet init`.
+
+### 3. Run
+
+Each long-running command needs its own terminal. Stop it with **Ctrl+C**.
+
+```bash
+# Apps
+uv run leads dashboard                            # web UI            → http://localhost:8501
+uv run leads api                                  # REST API + Swagger → http://localhost:8000/docs
+
+# Collect leads
+uv run leads run dental-uk --dry-run --limit 10   # preview: crawls a few sites, saves nothing
+uv run leads run dental-uk                        # real run: saves new leads to the database
+uv run leads run --all                            # every search in config.yaml
+uv run leads scheduler start                      # run searches on their schedules (keep it open)
+
+# Work with the leads
+uv run leads list --status new --email-status valid
+uv run leads status info@acme.com contacted --note "intro sent"
+uv run leads export --email-status valid          # CSV for an email tool → exports/
+```
+
+All commands: [CLI](#cli). Day-to-day order of steps: [Workflow](#workflow).
+
+**`leads doctor` lines that may say FAIL without stopping you:**
+
+- `google places`: no `GOOGLE_PLACES_API_KEY`. It's optional; searches that list `google_places` just skip it.
+- `overpass`: the public OpenStreetMap server is slow or busy. Runs may still work. See [Troubleshooting](#troubleshooting).
 
 ### PostgreSQL setup (recommended for production)
 
 1. Get a PostgreSQL 16+ database: a managed service such as [Neon](https://neon.com) (this project's choice; free tier), a local install (e.g. Homebrew), or `docker compose up -d` with the included [docker-compose.yml](docker-compose.yml).
-2. `uv sync --extra postgres`, and put the connection string in `.env` as `DATABASE_URL` (e.g. `postgresql://user:password@localhost:5432/leadgen`).
+2. Install the `postgres` extra together with the others you use (`uv sync --extra dashboard --extra api --extra postgres`; `uv sync` removes extras you leave out), and put the connection string in `.env` as `DATABASE_URL` (e.g. `postgresql://user:password@localhost:5432/leadgen`).
 3. `uv run leads db migrate` creates the tables (run it again after upgrading leadgen). On Neon, keep the **pooled** URL (`-pooler` in the host) in `.env` for the app, and run migrations over the **direct** URL: `DATABASE_URL="<URL without -pooler>" uv run leads db migrate`.
 4. Set `store: postgres` in `config/config.yaml`. Moving existing data? `uv run leads db import --from sqlite` (or `--from sheets`, or `--from postgres` with the source in `SOURCE_DATABASE_URL`, e.g. local → Neon; `--dry-run` first) copies leads, activities, opt-outs and run history, and is safe to re-run.
 
@@ -84,7 +124,7 @@ Why, and what comes next: [docs/postgres-migration-plan.md](docs/postgres-migrat
 From setup to closed deal. Steps 4–10 repeat for every campaign or schedule. The CLI, the dashboard, the REST API and the Google Sheet all read and write the same store, so you can mix them.
 
 ```
-  1. Set up ......... leads init → .env + config.yaml → leads doctor → leads sheet init        (once)
+  1. Set up ......... uv sync (3 extras) → leads init → config.yaml + .env → leads db migrate → leads doctor   (once)
         │
   2. Define ......... searches in config.yaml: keywords × locations × sources
         │
@@ -116,7 +156,7 @@ From setup to closed deal. Steps 4–10 repeat for every campaign or schedule. T
 
 ### Step by step
 
-1. **Set up (once).** Follow [Quick start](#quick-start): install, run `leads init`, set `user_agent` to your real bot name and contact (public OpenStreetMap services may refuse unidentified clients), add credentials to `.env`, and repeat `leads doctor` until its checks pass. Run `leads sheet init` if you use Google Sheets.
+1. **Set up (once).** Follow [Quick start](#quick-start-run-the-project): install, run `leads init`, set `user_agent` to your real bot name and contact (public OpenStreetMap services may refuse unidentified clients), add credentials to `.env`, run `leads db migrate` (PostgreSQL) or `leads sheet init` (Google Sheets), and repeat `leads doctor` until its checks pass.
 
 2. **Define searches** in [`config/config.yaml`](#configuration-configconfigyaml): `keywords × locations × sources`.
    - Use cities rather than whole countries. `max_results` applies per location, and country-wide Overpass queries are slow.
@@ -215,7 +255,7 @@ Global options: `--config PATH` (or `LEADGEN_CONFIG`), `--store sheets|sqlite|po
 ## REST API (Swagger)
 
 ```bash
-uv sync --extra api
+uv sync --extra dashboard --extra api --extra postgres   # the extras you use; uv sync removes unlisted ones
 uv run leads api                   # Swagger UI: http://localhost:8000/docs · ReDoc: /redoc · schema: /openapi.json
 ```
 
@@ -529,12 +569,14 @@ lead-scraper/
 
 - **New source** (a directory you've confirmed allows automated access, a search API, a CSV feed): implement `Source` in `src/leadgen/sources/base.py` and register it in `sources/registry.py`.
 - **Enrichment** (e.g. Hunter.io for named contacts): implement `Enricher` in `src/leadgen/enrich/base.py` and pass it to `Pipeline(enrichers=[...])`.
-- **JS-only sites**: run `uv sync --extra browser && uv run playwright install chromium`, then set `crawl.render_js: true`. Only pages that look empty are rendered.
+- **JS-only sites**: add `--extra browser` to your usual `uv sync` command (e.g. `uv sync --extra dashboard --extra api --extra postgres --extra browser`), run `uv run playwright install chromium`, then set `crawl.render_js: true`. Only pages that look empty are rendered.
 
 ## Troubleshooting
 
 | Symptom | Fix |
 |---|---|
+| `Overpass … ReadTimeout` / `The read operation timed out` | The public Overpass server is busy (it happens with big cities). Retry later, or set `osm.overpass_url` to another public instance listed on the [OSM wiki](https://wiki.openstreetmap.org/wiki/Overpass_API#Public_Overpass_API_instances). Other locations in the same run are unaffected. |
+| `PostgreSQL store needs: uv sync --extra postgres …` | An install removed the extra: run `uv sync --extra dashboard --extra api --extra postgres`. |
 | `Overpass HTTP 406/403 … refused this client` | The public Overpass server filters some clients. Read its [usage policy](https://dev.overpass-api.de/overpass-doc/en/preface/commons.html), make sure `user_agent` names your application with a real contact URL/email, or set `osm.overpass_url` to another instance you may use (e.g. self-hosted). |
 | `Google Places API 403` | Enable *Places API (New)* (not the legacy Places API), enable billing, and check the key restrictions. |
 | Sheets `PERMISSION_DENIED` / `SpreadsheetNotFound` | Share the sheet with the service account email as Editor; check `GOOGLE_SHEET_ID`. |
@@ -552,7 +594,7 @@ Logs: the console, plus JSON lines in `logs/leadgen.log` (rotated).
 uv sync --extra dashboard --extra api --extra postgres   # tests for missing extras are skipped
 uv run pytest            # extractors, validation, robots/rate limits (mocked HTTP), sources, end-to-end pipeline,
                          # store contract (SQLite, Sheets, PostgreSQL), CLI, REST API, dashboard
-TEST_DATABASE_URL=postgresql:///leadgen_test uv run pytest   # also run every PostgreSQL test (124 in total);
+TEST_DATABASE_URL=postgresql:///leadgen_test uv run pytest   # also run every PostgreSQL test (125 in total);
                          # each test gets its own throwaway schema in that database
 uv run ruff check src tests && uv run ruff format src tests
 ```

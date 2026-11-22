@@ -1,5 +1,5 @@
 """PostgreSQL lead store: the same LeadStore interface as Google Sheets and SQLite, for production use
-(several programs writing at once, server deployment). Needs `uv sync --extra postgres` and
+(several programs writing at once, server deployment). Needs the `postgres` extra and
 DATABASE_URL in .env; create/upgrade the schema with `leads db migrate`.
 
 The rest of the code keeps working with string values ("" = unknown); this adapter converts timestamps
