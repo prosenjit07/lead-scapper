@@ -70,6 +70,87 @@ No Google account yet? Add `--store sqlite` to any command (or set `store: sqlit
 
 ---
 
+## Workflow
+
+From setup to closed deal. Steps 4–10 repeat for every campaign or schedule. The CLI, the dashboard, the REST API and the Google Sheet all read and write the same store, so you can mix them.
+
+```
+  1. Set up ......... leads init → .env + config.yaml → leads doctor → leads sheet init        (once)
+        │
+  2. Define ......... searches in config.yaml: keywords × locations × sources
+        │
+  3. Preview ........ leads run <search> --dry-run --limit 20            nothing is saved
+        │
+  4. Collect ........ leads run <search> · scheduler · dashboard · POST /runs
+        │               → new leads, status = new
+  5. Review ......... dashboard · Google Sheet · leads list · GET /leads
+        │               → qualified  or  do_not_contact
+  6. Re-check ....... leads validate --recheck                            emails go stale
+        │
+  7. Export ......... leads export · GET /export                          contactable leads only
+        │
+  8. Outreach ....... your email tool → status contacted + Activities row (email_sent)
+        │
+  9. Follow up ...... replied → meeting → won / lost        bounced · unsubscribed → never contacted again
+        │
+ 10. Maintain ....... leads forget (erasure) · leads purge (retention) · next scheduled run → step 4
+```
+
+**Lead status lifecycle.** Opt-out statuses are left out of every export, and `leads purge` turns them into suppression hashes before deleting the lead:
+
+```
+ run ──▶ new ──▶ qualified ──▶ contacted ──▶ replied ──▶ meeting ──▶ won / lost
+          │                        │
+          ▼                        ▼
+    do_not_contact         bounced · unsubscribed         (opt-out statuses)
+```
+
+### Step by step
+
+1. **Set up (once).** Follow [Quick start](#quick-start): install, run `leads init`, set `user_agent` to your real bot name and contact (public OpenStreetMap services may refuse unidentified clients), add credentials to `.env`, and repeat `leads doctor` until its checks pass. Run `leads sheet init` if you use Google Sheets.
+
+2. **Define searches** in [`config/config.yaml`](#configuration-configconfigyaml): `keywords × locations × sources`.
+   - Use cities rather than whole countries. `max_results` applies per location, and country-wide Overpass queries are slow.
+   - Check that each keyword maps to OSM tags in the [industry taxonomy](src/leadgen/data/industries.yaml), or set `osm_tags`. Keywords that map to the same tags only repeat the query.
+   - `leads scheduler list` or `GET /searches` shows what is configured.
+
+3. **Preview.** `leads run <search> --dry-run --limit 20 --out preview.csv` discovers and crawls but saves nothing. It also doesn't mark domains as crawled, so the real run still visits them. The dashboard's *Run search* tab and `POST /runs` with `"dry_run": true` do the same.
+
+4. **Collect.** `leads run <search>` (or `--all`); the dashboard's *Run search* tab with *Dry run* unticked; `POST /runs`; or schedules (`leads scheduler start`, or cron). Each run discovers businesses, crawls their sites, validates emails, removes duplicates, and writes new leads with `status = new`. Per-run stats go to the *Runs* tab or table (`GET /runs`). Re-running is safe:
+   - known businesses only get their blank fields filled;
+   - domains crawled in the last 30 days are skipped;
+   - suppressed emails and domains are never collected again.
+
+   How a run works internally is described in [How the scraping works](#how-the-scraping-works).
+
+5. **Review and qualify.** Open the dashboard's *Leads* tab, the Google Sheet (status dropdown), `leads list --status new --email-status valid`, or `GET /leads?status=new`. Mark good fits `qualified` and bad fits `do_not_contact`, and set `owner`, `notes` and `next_follow_up_at` as needed. The CLI, dashboard and API log every status change to *Activities*; edits typed directly into the Google Sheet are not logged.
+
+6. **Re-check emails before sending.** `leads validate --recheck` repeats the DNS checks for every stored email; without `--recheck`, only risky or unchecked emails are re-checked. Domains expire and mail servers move, so do this before each campaign.
+
+7. **Export.** `leads export --status qualified --email-status valid` writes `exports/leads_<timestamp>.csv` (add `--format json` for JSON), or call `GET /export?status=qualified&email_status=valid`. Leads without an email, with an `invalid` email, or with an opt-out status are excluded by default. The dashboard's *Download CSV* button exports the filtered table **as is**, opt-outs included, so use `leads export` for email tools.
+
+8. **Outreach.** Send with your email tool. Say where you found the address and how to opt out (GDPR Art. 14), and check the cold-email rules of the recipient's country. Then record what you sent:
+
+   ```bash
+   leads status info@acme.com contacted --note "intro email, sequence step 1"
+   # or, from an email tool, via the API:
+   curl -X PATCH localhost:8000/leads/info@acme.com -H 'Content-Type: application/json' \
+        -d '{"status": "contacted", "campaign": "q1-dental", "sequence_step": "1"}'
+   curl -X POST localhost:8000/leads/info@acme.com/activities -H 'Content-Type: application/json' \
+        -d '{"type": "email_sent", "details": "intro email", "campaign": "q1-dental"}'
+   ```
+
+   Setting `contacted` also stamps `last_contacted_at`.
+
+9. **Follow up.** Move leads through `replied → meeting → won / lost`, and use `next_follow_up_at` to plan the next touch. A bounce becomes `bounced`, and an opt-out becomes `unsubscribed` or `do_not_contact`. These three statuses are excluded from every export.
+
+10. **Maintain.**
+    - **Erasure requests:** `leads forget jane@acme.com` (one person) or `leads forget acme.com` (whole company), or `POST /privacy/forget`. The data is deleted and a SHA-256 hash is kept, so it is never collected or contacted again.
+    - **Retention:** `leads purge --dry-run`, then `leads purge`. This deletes leads older than `retention_days` that were never engaged; opt-outs become suppression hashes first.
+    - Scheduled runs start again at step 4. They skip everything already known or suppressed.
+
+---
+
 ## Configuration (`config/config.yaml`)
 
 ```yaml
@@ -331,6 +412,96 @@ The highest score becomes `email`, and the next five go to `additional_emails`. 
 - OSM coverage and tagging vary by country and city. `out tags N` returns the first `N` matching elements, not the "best" ones.
 - Email validation is DNS-based only. Run `leads validate --recheck` before a campaign, and consider a paid verifier.
 
+## Project structure
+
+Each file, with one line on what it's for. Folders marked *(local)* are created on your machine and kept out of git.
+
+```
+lead-scraper/
+├── README.md                      # this guide
+├── pyproject.toml                 # dependencies, optional extras (dashboard, api, browser), `leads` command, pytest/ruff settings
+├── uv.lock                        # exact dependency versions, for reproducible installs
+├── .gitignore                     # keeps secrets, databases, logs and exports out of git
+├── .env                           # (local) secrets: Google credentials, Places API key, LEADGEN_API_KEY
+├── config/
+│   └── config.yaml                # your searches, schedules, crawl, OSM and compliance settings
+├── docs/
+│   ├── swagger.yaml               # REST API spec (OpenAPI 3.1), readable; generated by `leads api --openapi`
+│   └── openapi.json               # the same spec as JSON, for Postman and client generators
+├── data/                          # (local) leads.db (SQLite leads), state.db (crawl history + geocode cache), unsaved_*.csv
+├── logs/                          # (local) leadgen.log: rotating JSON-lines log of every run
+├── exports/                       # (local) CSV/JSON files written by `leads export`
+├── secrets/                       # (local) service-account.json for Google Sheets
+│
+├── src/leadgen/
+│   ├── __init__.py                # package version
+│   ├── cli.py                     # the `leads` command line (Typer): init, doctor, run, list, status, export, forget, api …
+│   ├── api.py                     # REST API (FastAPI) with Swagger UI: leads, activities, runs, export, GDPR erasure
+│   ├── config.py                  # loads and validates config.yaml and .env secrets (Pydantic)
+│   ├── models.py                  # shared data types: Lead (one sheet row), statuses, Candidate, RunStats
+│   ├── runner.py                  # one entry point for CLI, API, dashboard and scheduler: builds sources, runs the pipeline
+│   ├── pipeline.py                # a run: discover → pre-check → crawl → extract → validate → dedupe → batch write
+│   ├── dedupe.py                  # duplicate keys (email / domain / name+city) and stable `ld_…` lead IDs
+│   ├── normalize.py               # cleans URLs, domains (Public Suffix List), phones (E.164), countries and names
+│   ├── compliance.py              # suppression hashes, GDPR erasure (`forget`) and retention clean-up (`purge`)
+│   ├── views.py                   # lead filters, counts and status-change helpers shared by CLI, dashboard and API
+│   ├── scheduler.py               # runs configured searches on cron schedules (APScheduler)
+│   ├── logging_setup.py           # readable console output plus the rotating JSON-lines log file
+│   │
+│   ├── sources/                   # DISCOVERY: where businesses come from
+│   │   ├── base.py                # Source interface: (keyword, location) → candidate businesses
+│   │   ├── registry.py            # creates sources by name; register new sources here
+│   │   ├── osm_overpass.py        # OpenStreetMap: geocode with Nominatim, query businesses with Overpass
+│   │   ├── google_places.py       # Google Places API (New) text search; discovery-only by default
+│   │   └── seed_urls.py           # your own list of websites (.txt or .csv)
+│   │
+│   ├── http/                      # FETCHING: polite HTTP
+│   │   ├── fetcher.py             # every request: robots.txt, rate limit, retries, redirects, 2 MB cap
+│   │   ├── robots.py              # robots.txt download, cache and rules (Protego, RFC 9309)
+│   │   ├── ratelimit.py           # one request at a time per site, with a minimum gap
+│   │   └── browser.py             # optional headless Chromium (Playwright) for JavaScript-only pages
+│   │
+│   ├── extract/                   # EXTRACTION: reading business websites
+│   │   ├── website.py             # crawls homepage + contact/legal/about/team pages, collects everything found
+│   │   ├── emails.py              # emails from mailto links and visible text; drops junk; never decodes hidden ones
+│   │   ├── jsonld.py              # schema.org JSON-LD: organization name, address, phones, emails, people
+│   │   ├── social.py              # recognizes Facebook, Instagram, X/Twitter and LinkedIn profile links
+│   │   └── industry.py            # maps OSM tags, Places types, schema.org types and keywords to one industry
+│   │
+│   ├── validate/
+│   │   └── email.py               # email checks (syntax, disposable, DNS MX), role/personal type, best-email ranking
+│   ├── enrich/
+│   │   └── base.py                # hook for optional extra data sources (e.g. an official API); none built in
+│   │
+│   ├── store/                     # STORAGE: where leads are saved
+│   │   ├── base.py                # LeadStore interface that every storage backend implements
+│   │   ├── sheets.py              # Google Sheets backend: tabs, headers, dropdowns, Summary formulas, safe RAW writes
+│   │   ├── sqlite_store.py        # SQLite backend: same interface, one local file
+│   │   └── state.py               # crawl state, not leads: when each domain was crawled, cached geocodes
+│   │
+│   ├── dashboard/
+│   │   └── app.py                 # Streamlit UI: KPIs, charts, editable leads table, run a search, run history
+│   │
+│   └── data/                      # files shipped inside the package
+│       ├── config.example.yaml    # template copied to config/config.yaml by `leads init`
+│       ├── env.example            # template copied to .env by `leads init`
+│       ├── industries.yaml        # industry taxonomy: ~30 industries with keywords, OSM tags, Places/schema.org types
+│       └── disposable_domains.txt # throwaway-email domains, marked invalid during validation
+│
+└── tests/                         # pytest suite: no real network, DNS or Google calls
+    ├── conftest.py                # shared fixtures: test config, fake DNS lookups, HTML fixture loader
+    ├── fixtures/acme_*.html       # sample business pages (home, contact) used by extraction and pipeline tests
+    ├── test_extract.py            # email, JSON-LD, social-link and website parsing
+    ├── test_fetcher.py            # robots.txt rules, crawl-delay, retries, redirects, size cap (mocked HTTP)
+    ├── test_sources.py            # OSM, Places and seed-file sources against mocked APIs
+    ├── test_pipeline.py           # end-to-end runs into SQLite: dedupe, merges, dry run, opt-outs, error isolation
+    ├── test_dedupe_validate.py    # duplicate keys, lead IDs, email validation, suppression hashes
+    ├── test_sheets_store.py       # Google Sheets backend against a fake gspread
+    ├── test_compliance_cli.py     # CLI commands, purge and forget
+    ├── test_dashboard.py          # renders the dashboard headlessly
+    └── test_api.py                # REST API endpoints, API key, background runs, Swagger file freshness
+```
+
 ## Extending
 
 - **New source** (a directory you've confirmed allows automated access, a search API, a CSV feed): implement `Source` in `src/leadgen/sources/base.py` and register it in `sources/registry.py`.
@@ -354,7 +525,7 @@ Logs: the console, plus JSON lines in `logs/leadgen.log` (rotated).
 
 ```bash
 uv sync --extra dashboard --extra api   # the dashboard and API tests are skipped without these
-uv run pytest            # 75 tests: extractors, validation, robots/rate limits (mocked HTTP), sources,
+uv run pytest            # 77 tests: extractors, validation, robots/rate limits (mocked HTTP), sources,
                          # end-to-end pipeline (SQLite), Sheets store (fake gspread), CLI, REST API, dashboard
 uv run ruff check src tests && uv run ruff format src tests
 ```
